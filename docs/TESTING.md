@@ -75,3 +75,6 @@ Rollback: `sudo systemctl disable --now amail@ec2-user; sudo rm /usr/local/bin/a
 - **2026-09-16**: plan above executed against `ausa-web` (Amazon Linux 2023, public Elastic IP) from
   `austin-pc` (Windows 11, behind NAT). Server elected in seconds, PC -> server direct delivery in ~20 s,
   server -> PC via hold + pull in ~5 s. Recorded in the Server Administrator hub (runs `20260916-1652*`).
+- **2026-09-16 (0.1.1)**: upgraded in place and migrated to the dedicated `amail` user. Flood, mailbox-cap
+  and disk-floor behaviour covered by `internal/node/limits_test.go`; live two-way delivery re-verified
+  with files landing group-readable for `ec2-user`.
