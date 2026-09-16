@@ -78,3 +78,6 @@ Rollback: `sudo systemctl disable --now amail@ec2-user; sudo rm /usr/local/bin/a
 - **2026-09-16 (0.1.1)**: upgraded in place and migrated to the dedicated `amail` user. Flood, mailbox-cap
   and disk-floor behaviour covered by `internal/node/limits_test.go`; live two-way delivery re-verified
   with files landing group-readable for `ec2-user`.
+- **2026-09-16 (0.1.2)**: `austin-pc` switched to `listen: "off"`. No port open on the PC (netstat shows
+  nothing on 4444), still delivers directly to `ausa-web` and receives by pull. Covered by
+  `TestClientOnlyListenOff`.
