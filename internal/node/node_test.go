@@ -267,6 +267,31 @@ func TestBlacklistAndWhitelist(t *testing.T) {
 	}
 }
 
+func TestClientOnlyListenOff(t *testing.T) {
+	ns := newNet(t, []bool{true, false})
+	n0, n1 := ns[0], ns[1]
+	n1.stop()
+	n1.cfg.Listen = config.ListenOff
+	start(t, n1)
+	if n1.node.ListenAddr() != "" {
+		t.Fatal("client-only node must not listen")
+	}
+	waitRole(t, n0, RoleServer, "node0")
+	waitRole(t, n1, RoleClient, "node0")
+	if st := n1.node.Status(); st.Listening {
+		t.Fatal("status must report not listening")
+	}
+	// sends directly, receives by pull
+	n1.drop(t, "node0", "out.txt", "from a closed node")
+	waitFile(t, inbox(n0, "node1", "out.txt"), "from a closed node")
+	n0.drop(t, "node1", "in.txt", "to a closed node")
+	waitFile(t, inbox(n1, "node0", "in.txt"), "to a closed node")
+
+	// alone, it can never become server
+	n0.stop()
+	waitRole(t, n1, RoleSearching, "")
+}
+
 func TestTooLarge(t *testing.T) {
 	ns := newNet(t, []bool{true, true})
 	n0, n1 := ns[0], ns[1]

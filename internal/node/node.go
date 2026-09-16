@@ -126,7 +126,11 @@ func (n *Node) setRole(role, leader string) {
 		case RoleClient:
 			n.log.Printf("role: client of %s", leader)
 		default:
-			n.log.Printf("role: searching (no reachable server and this node is not eligible)")
+			if n.cfg.ClientOnly() {
+				n.log.Printf("role: searching (client-only node, no whitelisted server answers yet)")
+			} else {
+				n.log.Printf("role: searching (no reachable server and this node is not eligible)")
+			}
 		}
 	}
 }
@@ -167,6 +171,10 @@ func (n *Node) Run(ctx context.Context) error {
 // --- listener -------------------------------------------------------------
 
 func (n *Node) startListener(ctx context.Context) {
+	if n.cfg.ClientOnly() {
+		n.log.Printf("listener off: client-only node (no inbound port, never server; sends directly and pulls from the server)")
+		return
+	}
 	ln, err := net.Listen("tcp", n.cfg.Listen)
 	n.mu.Lock()
 	if err != nil {

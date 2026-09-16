@@ -61,6 +61,9 @@ Properties:
 * Nodes without a host can never be picked by others, so a laptop behind NAT
   never becomes everyone's server. It can still be *its own* server when it is
   alone, which is harmless.
+* A node with `listen: "off"` is client-only: no port, not eligible, role
+  `searching` until a whitelisted server answers. Everything it receives
+  arrives by pull.
 * Mixed reachability (A sees B but C cannot) resolves itself because a node
   that receives a file for someone else forwards it on through its own
   server, bounded by the hop limit.

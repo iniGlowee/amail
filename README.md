@@ -127,6 +127,12 @@ amail ca list                                            (operator) issued keys
 home (useful for running two nodes on one machine). `AMAIL_DEBUG=1` makes
 delivery attempts chatty.
 
+**Client-only nodes.** A PC that only wants to send and receive, and keep
+every port closed, uses `amail init --listen off` (or sets `"listen": "off"`
+in `config.json`). It never opens 4444, never triggers a firewall prompt,
+can never become the server, and still works fully: it delivers straight to
+hosted nodes and pulls whatever is held for it from the server.
+
 ## How it decides who is the server
 
 The whitelist is an ordered list. Every node, every `discovery_seconds`

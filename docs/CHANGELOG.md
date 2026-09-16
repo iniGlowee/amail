@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2 (2026-09-16)
+
+* `listen: "off"` (or `amail init --listen off`): a client-only node. It
+  opens no port, so no firewall prompt and nothing to scan; it can never be
+  elected server; it still delivers directly to hosted nodes and pulls its
+  own mail from the server. `amail status` marks it accordingly.
+
 ## 0.1.1 (2026-09-16)
 
 Hardening after the first live deployment.

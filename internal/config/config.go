@@ -22,6 +22,10 @@ const DefaultPort = 4444
 // FileName is the config file inside the AMail home directory.
 const FileName = "config.json"
 
+// ListenOff as the Listen value makes a client-only node: it opens no port,
+// can never be server, and still sends directly and pulls its own mail.
+const ListenOff = "off"
+
 var idRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // ValidID reports whether id is an acceptable node id. Node ids are used as
@@ -218,8 +222,10 @@ func (c *Config) Validate() error {
 	if err := ValidID(c.NodeID); err != nil {
 		return err
 	}
-	if _, _, err := net.SplitHostPort(c.Listen); err != nil {
-		return fmt.Errorf("listen %q: %w", c.Listen, err)
+	if !c.ClientOnly() {
+		if _, _, err := net.SplitHostPort(c.Listen); err != nil {
+			return fmt.Errorf("listen %q: use host:port, :4444 or %q", c.Listen, ListenOff)
+		}
 	}
 	seen := map[string]bool{}
 	for _, p := range c.Whitelist {
@@ -234,8 +240,14 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// ListenPort returns the numeric port from Listen.
+// ClientOnly reports whether the node opens no port at all.
+func (c *Config) ClientOnly() bool { return strings.EqualFold(strings.TrimSpace(c.Listen), ListenOff) }
+
+// ListenPort returns the numeric port from Listen, or 0 for a client-only node.
 func (c *Config) ListenPort() int {
+	if c.ClientOnly() {
+		return 0
+	}
 	_, p, err := net.SplitHostPort(c.Listen)
 	if err != nil {
 		return DefaultPort

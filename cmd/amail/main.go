@@ -43,6 +43,7 @@ Usage: amail [--home DIR] <command> [args]
 
 Node commands
   init [--id NAME] [--mailbox DIR] [--listen :4444]   create this node's home, config and mailbox folders
+                                                     (--listen off = client-only: no open port, never server)
   request-key                                        show how to ask %s for a network key
   join <file.amailkey>                               install the network key you were given
   run                                                run the node (foreground; use the service scripts to keep it running)
@@ -192,7 +193,7 @@ func cmdInit(home string, args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	id := fs.String("id", "", "node id (default: this machine's host name)")
 	mb := fs.String("mailbox", "", "mailbox folder (default: ~/AMail)")
-	listen := fs.String("listen", "", "listen address (default :4444)")
+	listen := fs.String("listen", "", "listen address (default :4444; \"off\" for a client-only node that opens no port)")
 	force := fs.Bool("force", false, "overwrite an existing config")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -362,7 +363,11 @@ func cmdStatus(home string, args []string) error {
 	var rows []row
 	local := config.Peer{ID: cfg.NodeID, Host: "127.0.0.1", Port: cfg.ListenPort(), Note: "this machine"}
 	if len(want) == 0 || want[cfg.NodeID] {
-		rows = append(rows, probe(cli, local))
+		if cfg.ClientOnly() {
+			rows = append(rows, row{Peer: config.Peer{ID: cfg.NodeID, Note: "this machine"}, Err: "client-only (listen: off); see the server's view of it"})
+		} else {
+			rows = append(rows, probe(cli, local))
+		}
 	}
 	for _, p := range cfg.Whitelist {
 		if p.ID == cfg.NodeID || (len(want) > 0 && !want[p.ID]) {
