@@ -21,9 +21,21 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"amail/internal/config"
+)
+
+// FreeBytes reports the free space on the volume holding path. It is a
+// variable so tests can simulate a full disk.
+var FreeBytes = freeBytes
+
+// Permissions: group-writable so a second account (in the mailbox owner's
+// group) can drop and read files. Windows ignores these bits.
+const (
+	dirPerm  = 0o775
+	filePerm = 0o664
 )
 
 // Folder names under the mailbox root.
@@ -47,6 +59,36 @@ var StableAge = 3 * time.Second
 // Mailbox is a mailbox root directory.
 type Mailbox struct {
 	Root string
+
+	usageMu sync.Mutex
+	usage   int64
+	usageAt time.Time
+}
+
+// usageTTL is how long a computed mailbox size is trusted before rescanning.
+const usageTTL = 30 * time.Second
+
+// Usage returns the bytes held in inbox, forward and failed: everything the
+// network can fill. It is rescanned at most every usageTTL and bumped
+// immediately by each accepted file, so back-to-back deliveries count.
+func (m *Mailbox) Usage() int64 {
+	m.usageMu.Lock()
+	defer m.usageMu.Unlock()
+	if time.Since(m.usageAt) < usageTTL {
+		return m.usage
+	}
+	var total int64
+	for _, kind := range []string{DirInbox, DirForward, DirFailed} {
+		_ = walkFiles(m.Dir(kind), func(_, _ string, info fs.FileInfo) { total += info.Size() })
+	}
+	m.usage, m.usageAt = total, time.Now()
+	return total
+}
+
+func (m *Mailbox) addUsage(n int64) {
+	m.usageMu.Lock()
+	m.usage += n
+	m.usageMu.Unlock()
 }
 
 // Item is a file waiting to be delivered, from outbox/ or forward/.
@@ -93,8 +135,11 @@ func Open(root string) (*Mailbox, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := os.MkdirAll(abs, dirPerm); err != nil {
+		return nil, err
+	}
 	for _, d := range []string{DirInbox, DirOutbox, DirSent, DirForward, DirFailed} {
-		if err := os.MkdirAll(filepath.Join(abs, d), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(abs, d), dirPerm); err != nil {
 			return nil, err
 		}
 	}
@@ -203,7 +248,7 @@ func uniquePath(dir, base string) string {
 // writeUnique streams size bytes into dir/base (or a "(2)" variant if that
 // exists) via a temp file, and returns the final path.
 func writeUnique(dir, base string, r io.Reader, size int64) (string, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, dirPerm); err != nil {
 		return "", err
 	}
 	tmp, err := os.CreateTemp(dir, tmpPrefix+"*")
@@ -223,6 +268,7 @@ func writeUnique(dir, base string, r io.Reader, size int64) (string, error) {
 		_ = os.Remove(tmpName)
 		return "", err
 	}
+	_ = os.Chmod(tmpName, filePerm)
 	for i := 0; i < 50; i++ {
 		final := uniquePath(dir, base)
 		if err := os.Rename(tmpName, final); err == nil {
@@ -250,7 +296,11 @@ func (m *Mailbox) Receive(from, name string, r io.Reader, size int64) (string, e
 		return "", err
 	}
 	sub, base := split(clean)
-	return writeUnique(filepath.Join(m.Root, DirInbox, from, sub), base, r, size)
+	path, err := writeUnique(filepath.Join(m.Root, DirInbox, from, sub), base, r, size)
+	if err == nil {
+		m.addUsage(size)
+	}
+	return path, err
 }
 
 // Hold stores a file for another node under forward/<to>/<origin>/<name>
@@ -276,10 +326,11 @@ func (m *Mailbox) Hold(to, origin, name string, r io.Reader, size int64, meta Me
 		meta.ReceivedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	js, _ := json.MarshalIndent(meta, "", "  ")
-	if err := os.WriteFile(path+MetaExt, js, 0o644); err != nil {
+	if err := os.WriteFile(path+MetaExt, js, filePerm); err != nil {
 		_ = os.Remove(path)
 		return "", err
 	}
+	m.addUsage(size)
 	return path, nil
 }
 
@@ -401,7 +452,7 @@ func (m *Mailbox) HeldAll() []Item {
 func (m *Mailbox) moveTo(it Item, kind string) (string, error) {
 	sub, base := split(it.Name)
 	dir := filepath.Join(m.Dir(kind), it.To, sub)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, dirPerm); err != nil {
 		return "", err
 	}
 	dest := uniquePath(dir, base)
@@ -429,7 +480,7 @@ func (m *Mailbox) Fail(it Item, why string) (string, error) {
 		return "", err
 	}
 	note := fmt.Sprintf("AMail could not deliver %s to %s\n%s\n%s\n", it.Name, it.To, time.Now().Format(time.RFC3339), why)
-	_ = os.WriteFile(dest+".error.txt", []byte(note), 0o644)
+	_ = os.WriteFile(dest+".error.txt", []byte(note), filePerm)
 	return dest, nil
 }
 
@@ -468,7 +519,7 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.Create(dst)
+	out, err := os.OpenFile(dst, os.O_RDWR|os.O_CREATE|os.O_TRUNC, filePerm)
 	if err != nil {
 		return err
 	}

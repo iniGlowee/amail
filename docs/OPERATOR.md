@@ -72,7 +72,26 @@ Only nodes that should be reachable need TCP 4444 inbound:
 
 Client-only nodes need nothing opened: they dial out and pull.
 
-## 6. Where things are on a node
+## 6. Hardening a server node (Linux)
+
+* Run the daemon as a dedicated account with **no sudo**: `sudo
+  scripts/linux/install.sh amail`. The account gets `/home/amail`, no login
+  shell, and the mailbox `/home/amail/AMail` is group-writable so your normal
+  user (added to group `amail`) can still use the folders.
+* The unit caps memory at 128 MB and applies systemd containment
+  (`NoNewPrivileges`, `ProtectSystem=full`, `PrivateTmp`, address-family and
+  kernel restrictions). If the process were ever compromised it would be an
+  unprivileged user that can write only to its own home.
+* Limits in `config.json` (defaults in brackets): `max_connections` [64],
+  `max_per_ip_per_min` failed handshakes [20], `max_file_mb` [1024],
+  `max_mailbox_mb` [10240], `min_free_mb` [512]. Restart the service after
+  editing.
+* Security group / firewall: allow 4444 only from the other nodes' addresses.
+  Mutual TLS is the lock; the firewall is the fence around it.
+* Check the account really has no sudo: `sudo -l -U amail` should say it may
+  not run sudo.
+
+## 7. Where things are on a node
 
 | Path | What |
 |---|---|
@@ -82,7 +101,7 @@ Client-only nodes need nothing opened: they dial out and pull.
 | `<home>/state/history.jsonl` | one line per event, for scripts and dashboards |
 | `~/AMail/` | the mailbox: inbox, outbox, sent, forward, failed |
 
-## 7. Health checks from anywhere
+## 8. Health checks from anywhere
 
 `amail status` from any node with a key asks every whitelisted host for its
 role, version, uptime and folder counts. `amail status --json` is script

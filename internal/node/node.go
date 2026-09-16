@@ -62,6 +62,7 @@ type Node struct {
 	listenErr string
 	ln        net.Listener
 
+	lim      *limiter
 	inflight sync.Map // path -> struct{}
 	quiet    sync.Map // path -> time.Time of last "pending" log
 
@@ -99,6 +100,7 @@ func New(o Options) (*Node, error) {
 		version: o.Version,
 		started: time.Now(),
 		role:    RoleSearching,
+		lim:     newLimiter(o.Config.MaxConnections, o.Config.MaxPerIPPerMin),
 	}, nil
 }
 
@@ -191,9 +193,36 @@ func (n *Node) startListener(ctx context.Context) {
 				time.Sleep(200 * time.Millisecond)
 				continue
 			}
-			go n.handle(ctx, c)
+			ip := c.RemoteAddr().String()
+			if h, _, err := net.SplitHostPort(ip); err == nil {
+				ip = h
+			}
+			release, why, logIt := n.lim.admit(ip)
+			if why != "" {
+				_ = c.Close()
+				if logIt {
+					n.log.Printf("refused %s: %s", ip, why)
+				}
+				continue
+			}
+			go func() {
+				defer release()
+				n.handle(ctx, c)
+			}()
 		}
 	}()
+}
+
+// roomFor reports why a file of the given size cannot be stored right now:
+// the mailbox cap or the disk free-space floor. Empty means go ahead.
+func (n *Node) roomFor(size int64) string {
+	if n.mb.Usage()+size > n.cfg.MaxMailboxBytes() {
+		return fmt.Sprintf("%s mailbox is full (%d MB cap)", n.cfg.NodeID, n.cfg.MaxMailboxMB)
+	}
+	if free, err := mailbox.FreeBytes(n.mb.Root); err == nil && free-size < n.cfg.MinFreeBytes() {
+		return fmt.Sprintf("%s is low on disk space", n.cfg.NodeID)
+	}
+	return ""
 }
 
 // ListenAddr returns the bound address, if listening.
@@ -219,7 +248,12 @@ func (n *Node) handle(ctx context.Context, raw net.Conn) {
 	err := tc.HandshakeContext(hctx)
 	cancel()
 	if err != nil {
-		n.log.Printf("refused %s: tls: %v", remote, err)
+		ip := remote
+		if h, _, e := net.SplitHostPort(remote); e == nil {
+			ip = h
+		}
+		n.lim.strike(ip)
+		n.quietf("tls:"+ip, "refused %s: tls: %v (further failures from this address are logged at most every 5 min)", remote, err)
 		return
 	}
 	peer := keys.PeerID(tc.ConnectionState())
@@ -319,6 +353,11 @@ func (n *Node) handleDeliver(conn *proto.Conn, peer, remote string, h *proto.Hea
 	}
 	if h.Size < 0 || h.Size > n.cfg.MaxBytes() {
 		_ = conn.Error(proto.CodeReject, fmt.Sprintf("%s refuses files over %d MB", self, n.cfg.MaxFileMB))
+		return
+	}
+	if why := n.roomFor(h.Size); why != "" {
+		n.quietf("refuse:"+peer+":"+name, "refused %s (%d bytes) from %s: %s (will log again in 5 min)", name, h.Size, peer, why)
+		_ = conn.Error(proto.CodeBusy, why)
 		return
 	}
 	to := h.To
@@ -617,10 +656,15 @@ func (n *Node) finish(it mailbox.Item, out outcome, err error) {
 			n.history("held", it.ID, it.Origin, it.To, "", it.Name, it.Size, "")
 		}
 	default:
-		if last, ok := n.quiet.Load(it.Path); !ok || time.Since(last.(time.Time)) > 5*time.Minute {
-			n.quiet.Store(it.Path, time.Now())
-			n.log.Printf("no route yet for %s to %s (will keep trying)", it.Name, it.To)
-		}
+		n.quietf(it.Path, "no route yet for %s to %s (will keep trying)", it.Name, it.To)
+	}
+}
+
+// quietf logs a repeating condition at most once every 5 minutes per key.
+func (n *Node) quietf(key, format string, args ...any) {
+	if last, ok := n.quiet.Load(key); !ok || time.Since(last.(time.Time)) > 5*time.Minute {
+		n.quiet.Store(key, time.Now())
+		n.log.Printf(format, args...)
 	}
 }
 
@@ -678,6 +722,9 @@ func (n *Node) pull(ctx context.Context) {
 	}
 	self := n.cfg.NodeID
 	got, err := n.cli.Pull(ctx, sp, func(h *proto.Header, body io.Reader) error {
+		if why := n.roomFor(h.Size); why != "" {
+			return errors.New(why)
+		}
 		path, err := n.mb.Receive(h.Origin, h.Name, body, h.Size)
 		if err != nil {
 			return err

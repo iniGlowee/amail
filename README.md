@@ -98,7 +98,10 @@ Rules of thumb:
   you see in `inbox/` is always complete.
 * File names are cleaned for the receiving OS (`< > : " | ? *` become `_`),
   and `..` is refused.
-* Default maximum file size is 1 GB (`max_file_mb`).
+* Default maximum file size is 1 GB (`max_file_mb`). Received data (inbox +
+  forward + failed) is capped at 10 GB (`max_mailbox_mb`) and nothing is
+  accepted when the disk has less than 512 MB free (`min_free_mb`). A refused
+  file waits in the sender's outbox and is retried.
 
 ## Commands
 
@@ -164,6 +167,16 @@ retried forever.
 * The key bundle contains the node's private key. Treat `.amailkey` files
   like passwords: send them over a channel you trust and delete them after
   `amail join`.
+* Flood protection runs before the TLS handshake: at most `max_connections`
+  (64) open connections, a quarter of that per source IP, and
+  `max_per_ip_per_min` (20) *failed* handshakes per IP per minute. Members
+  are never throttled; strangers hitting the port cost the node a closed
+  socket and one log line per minute.
+* Inside the network, sender attribution is trust-based: relaying requires
+  the `origin` field, so a member could claim another member's name. The
+  history log always records the node that actually connected.
+* On Linux run the daemon as a dedicated account with no sudo (the installer
+  creates one); the unit file adds `MemoryMax=128M` and kernel containment.
 
 ## For the operator (Austin Armas)
 
@@ -195,9 +208,14 @@ every push and attaches binaries to tagged releases (`v1.0.0`).
 * **Windows**: `powershell -ExecutionPolicy Bypass -File scripts\windows\install-startup.ps1`
   registers a scheduled task "AMail" that starts `amail run` at logon.
   `uninstall-startup.ps1` removes it.
-* **Linux (systemd)**: `sudo scripts/linux/install.sh <user>` installs the
-  binary to `/usr/local/bin` and a unit `amail@<user>.service`. Remember to
-  open TCP 4444 inbound (firewall / security group) on server nodes.
+* **Linux (systemd)**: `sudo scripts/linux/install.sh amail` creates a
+  sudo-less system user `amail` (if missing), adds you to its group, installs
+  the binary to `/usr/local/bin` and a unit `amail@amail.service`. The
+  mailbox is `/home/amail/AMail`, group-writable, so your login account can
+  drop and read files (`ln -s /home/amail/AMail ~/AMail` for convenience).
+  Initialise the node as that user: `sudo -u amail -H amail init --id <id>`.
+  Remember to open TCP 4444 inbound (firewall / security group) on server
+  nodes, ideally only from the other nodes' addresses.
 
 ## Project layout
 

@@ -72,6 +72,10 @@ type Config struct {
 	PollSeconds      int     `json:"poll_seconds"`
 	DiscoverySeconds int     `json:"discovery_seconds"`
 	MaxFileMB        int     `json:"max_file_mb"`
+	MaxMailboxMB     int     `json:"max_mailbox_mb"`     // cap on inbox+forward+failed (received data)
+	MinFreeMB        int     `json:"min_free_mb"`        // refuse files when the disk has less free
+	MaxConnections   int     `json:"max_connections"`    // concurrent inbound connections
+	MaxPerIPPerMin   int     `json:"max_per_ip_per_min"` // failed handshakes per source IP per minute
 	Whitelist        []Peer  `json:"whitelist"`
 	Blacklist        []Block `json:"blacklist"`
 
@@ -116,6 +120,10 @@ func Default(home, nodeID string) *Config {
 		PollSeconds:      10,
 		DiscoverySeconds: 30,
 		MaxFileMB:        1024,
+		MaxMailboxMB:     10240,
+		MinFreeMB:        512,
+		MaxConnections:   64,
+		MaxPerIPPerMin:   20,
 		Whitelist:        []Peer{},
 		Blacklist:        []Block{},
 		Home:             home,
@@ -164,6 +172,18 @@ func (c *Config) normalise() {
 	}
 	if c.MaxFileMB <= 0 {
 		c.MaxFileMB = 1024
+	}
+	if c.MaxMailboxMB <= 0 {
+		c.MaxMailboxMB = 10240
+	}
+	if c.MinFreeMB <= 0 {
+		c.MinFreeMB = 512
+	}
+	if c.MaxConnections <= 0 {
+		c.MaxConnections = 64
+	}
+	if c.MaxPerIPPerMin <= 0 {
+		c.MaxPerIPPerMin = 20
 	}
 	if c.Whitelist == nil {
 		c.Whitelist = []Peer{}
@@ -229,6 +249,12 @@ func (c *Config) ListenPort() int {
 
 // MaxBytes is the largest file the node accepts.
 func (c *Config) MaxBytes() int64 { return int64(c.MaxFileMB) << 20 }
+
+// MaxMailboxBytes is the cap on received data kept in the mailbox.
+func (c *Config) MaxMailboxBytes() int64 { return int64(c.MaxMailboxMB) << 20 }
+
+// MinFreeBytes is the disk free-space floor below which files are refused.
+func (c *Config) MinFreeBytes() int64 { return int64(c.MinFreeMB) << 20 }
 
 // Peer looks up a whitelist entry by id.
 func (c *Config) Peer(id string) (Peer, bool) {

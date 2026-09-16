@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.1 (2026-09-16)
+
+Hardening after the first live deployment.
+
+* Listener limits, applied before the TLS handshake: `max_connections`
+  (default 64) concurrent inbound, a per-IP concurrent cap (a quarter of
+  that, minimum 4) and `max_per_ip_per_min` *failed* handshakes (default
+  20). Members that complete the handshake are never throttled; strangers
+  are dropped at accept for the rest of the minute. Refusals are logged once
+  per IP per minute.
+* Storage limits: `max_mailbox_mb` (default 10240) caps received data in
+  inbox + forward + failed; `min_free_mb` (default 512) refuses files when
+  the disk is nearly full. Both answer `busy`, so the sender keeps the file
+  in its outbox and retries.
+* Mailbox folders are created group-writable (2775 / 664 on Linux) so a
+  dedicated service account can own the mailbox while a login user reads and
+  drops files.
+* systemd unit: `MemoryMax=128M`, `TasksMax`, `LimitNOFILE`, `UMask=0002`
+  and extra containment directives. `install.sh` creates a sudo-less system
+  user and adds the installer to its group.
+
 ## 0.1.0 (2026-09-16)
 
 First build.

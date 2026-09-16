@@ -116,6 +116,32 @@ amail.log             what the daemon did
 state/history.jsonl   one JSON line per received / delivered / relayed / held / failed event
 ```
 
+## Limits
+
+Applied in the accept loop, before TLS, so they cost almost nothing:
+
+| Limit | Default | Effect when hit |
+|---|---|---|
+| `max_connections` | 64 | socket closed, logged once |
+| per-IP concurrent (`max_connections/4`, min 4) | 16 | socket closed, logged once |
+| `max_per_ip_per_min` failed handshakes | 20 | socket closed for the rest of the minute, logged once |
+
+Only *failed* handshakes count toward the per-minute rule, so a member that
+reconnects every second (one connection per file, plus pulls and status
+checks) is never locked out, while a scanner that cannot present a network
+certificate is.
+
+Applied when a file is announced (`deliver`) or offered (`pull` item):
+
+| Limit | Default | Effect when hit |
+|---|---|---|
+| `max_file_mb` | 1024 | `reject`: sender moves the file to `failed/` |
+| `max_mailbox_mb` (inbox + forward + failed) | 10240 | `busy`: sender keeps retrying |
+| `min_free_mb` on the mailbox volume | 512 | `busy`: sender keeps retrying |
+
+Mailbox usage is rescanned at most every 30 s and bumped by each accepted
+file in between, so a burst cannot slip past the cap.
+
 ## What AMail is not
 
 * Not end-to-end encrypted. The tunnel is encrypted; nodes are trusted.

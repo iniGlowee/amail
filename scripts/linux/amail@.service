@@ -6,14 +6,30 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=%i
+Group=%i
+UMask=0002
 Environment=AMAIL_HOME=/home/%i/.amail
 ExecStart=/usr/local/bin/amail run
 Restart=always
 RestartSec=5
-# Files land in the user's ~/AMail; keep the service otherwise contained.
+
+# Resource limits: the daemon idles at ~2 MB; a flood of connections cannot
+# take the rest of the box with it.
+MemoryMax=128M
+TasksMax=256
+LimitNOFILE=4096
+
+# Containment: files land in the user's ~/AMail; nothing else is writable.
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictRealtime=true
+LockPersonality=true
 
 [Install]
 WantedBy=multi-user.target
