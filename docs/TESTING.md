@@ -69,3 +69,9 @@ Target: `ausa-web` (Amazon Linux 2023, see the Server Administrator hub,
 12. File the write-up: `php bin/sa.php doc deploys --server=ausa-web --title="AMail node" ...`.
 
 Rollback: `sudo systemctl disable --now amail@ec2-user; sudo rm /usr/local/bin/amail /etc/systemd/system/amail@.service`; close the security group rule.
+
+## Live test log
+
+- **2026-09-16**: plan above executed against `ausa-web` (Amazon Linux 2023, public Elastic IP) from
+  `austin-pc` (Windows 11, behind NAT). Server elected in seconds, PC -> server direct delivery in ~20 s,
+  server -> PC via hold + pull in ~5 s. Recorded in the Server Administrator hub (runs `20260916-1652*`).
