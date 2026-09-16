@@ -1,0 +1,23 @@
+# build output
+/dist/
+/build/
+*.exe
+*.test
+*.out
+
+# local runtime data (never commit keys, config or mail)
+/data/
+/home-*/
+*.amailkey
+ca/
+keys/
+*.key
+*.crt
+config.json
+
+# editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store

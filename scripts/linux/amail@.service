@@ -1,0 +1,19 @@
+[Unit]
+Description=AMail (Armas Mail) node for %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+Environment=AMAIL_HOME=/home/%i/.amail
+ExecStart=/usr/local/bin/amail run
+Restart=always
+RestartSec=5
+# Files land in the user's ~/AMail; keep the service otherwise contained.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
