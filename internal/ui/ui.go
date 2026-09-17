@@ -232,16 +232,44 @@ type Mail struct {
 	Hops   int    `json:"hops,omitempty"`
 }
 
+// mimeTypes covers what browsers can play or show inline; anything else is
+// offered as a download. Go's mime package is consulted after this table.
+var mimeTypes = map[string]string{
+	".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg", ".oga": "audio/ogg", ".flac": "audio/flac",
+	".m4a": "audio/mp4", ".aac": "audio/aac", ".opus": "audio/opus", ".weba": "audio/webm",
+	".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".ogv": "video/ogg",
+	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+	".svg": "image/svg+xml", ".bmp": "image/bmp", ".avif": "image/avif",
+	".pdf": "application/pdf", ".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8",
+}
+
 func kindOf(name string) string {
-	switch strings.ToLower(filepath.Ext(name)) {
-	case ".txt", ".md", ".log", ".json", ".csv", ".xml", ".yml", ".yaml", ".ini", ".conf", ".sh", ".ps1", ".php", ".go", ".js", ".css", ".html", ".htm", ".sql", ".py":
+	ext := strings.ToLower(filepath.Ext(name))
+	switch ext {
+	case ".txt", ".md", ".log", ".json", ".csv", ".xml", ".yml", ".yaml", ".ini", ".conf", ".sh", ".ps1", ".php", ".go", ".js", ".css", ".html", ".htm", ".sql", ".py", ".toml", ".env":
 		return "text"
-	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp":
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif":
 		return "image"
 	case ".pdf":
 		return "pdf"
 	}
+	if t := mimeTypes[ext]; strings.HasPrefix(t, "audio/") {
+		return "audio"
+	} else if strings.HasPrefix(t, "video/") {
+		return "video"
+	}
 	return "other"
+}
+
+func contentType(name string) string {
+	ext := strings.ToLower(filepath.Ext(name))
+	if t, ok := mimeTypes[ext]; ok {
+		return t
+	}
+	if t := mime.TypeByExtension(ext); t != "" {
+		return t
+	}
+	return "application/octet-stream"
 }
 
 func listFolder(mb *mailbox.Mailbox, folder string) ([]Mail, error) {
@@ -444,12 +472,13 @@ func (s *Server) apiFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	base := filepath.Base(p)
-	ctype := mime.TypeByExtension(filepath.Ext(base))
-	if ctype == "" {
-		ctype = "application/octet-stream"
-	}
-	if q.Get("inline") == "1" && st.Size() <= maxInline && kindOf(base) != "other" {
-		if kindOf(base) == "text" {
+	kind := kindOf(base)
+	// Text is shown inline only when small; media streams inline at any size
+	// (ServeContent handles range requests, so audio and video can seek).
+	inline := q.Get("inline") == "1" && kind != "other" && (kind != "text" || st.Size() <= maxInline)
+	if inline {
+		ctype := contentType(base)
+		if kind == "text" {
 			ctype = "text/plain; charset=utf-8"
 		}
 		w.Header().Set("Content-Type", ctype)
@@ -510,7 +539,10 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 			fail(w, 400, err.Error())
 			return
 		}
-		to := ""
+		// Fields, in order: to, optional prefix (message folder), then for each
+		// file an optional "path" (relative name, keeps dropped folders intact)
+		// followed by the "files" part itself.
+		to, prefix, nextPath := "", "", ""
 		for {
 			part, err := mr.NextPart()
 			if err == io.EOF {
@@ -524,6 +556,12 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 			case "to":
 				b, _ := io.ReadAll(io.LimitReader(part, 256))
 				to = strings.TrimSpace(string(b))
+			case "prefix":
+				b, _ := io.ReadAll(io.LimitReader(part, 1024))
+				prefix = strings.Trim(strings.TrimSpace(string(b)), "/")
+			case "path":
+				b, _ := io.ReadAll(io.LimitReader(part, 2048))
+				nextPath = strings.TrimSpace(string(b))
 			case "files":
 				if to == "" {
 					fail(w, 400, "recipient (to) must come before files")
@@ -532,7 +570,15 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 				if part.FileName() == "" {
 					continue
 				}
-				path, err := mb.Enqueue(to, filepath.Base(part.FileName()), io.LimitReader(part, cfg.MaxBytes()+1))
+				name := nextPath
+				nextPath = ""
+				if name == "" {
+					name = filepath.Base(part.FileName())
+				}
+				if prefix != "" {
+					name = prefix + "/" + name
+				}
+				path, err := mb.Enqueue(to, name, io.LimitReader(part, cfg.MaxBytes()+1))
 				if err != nil {
 					fail(w, 400, err.Error())
 					return
@@ -573,7 +619,11 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 	}
 	names := make([]string, len(queued))
 	for i, q := range queued {
-		names[i] = filepath.Base(q)
+		if rel, err := filepath.Rel(mb.Dir(mailbox.DirOutbox), q); err == nil {
+			names[i] = filepath.ToSlash(rel)
+		} else {
+			names[i] = filepath.Base(q)
+		}
 	}
 	writeJSON(w, map[string]any{"ok": true, "queued": names})
 }

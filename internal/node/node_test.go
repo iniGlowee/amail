@@ -2,6 +2,8 @@ package node
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"net"
@@ -290,6 +292,34 @@ func TestClientOnlyListenOff(t *testing.T) {
 	// alone, it can never become server
 	n0.stop()
 	waitRole(t, n1, RoleSearching, "")
+}
+
+func TestBinaryIntegrity(t *testing.T) {
+	// A 5 MB random "music file" must arrive byte for byte, direct and relayed.
+	ns := newNet(t, []bool{true, true, false})
+	n0, n1, n2 := ns[0], ns[1], ns[2]
+	for _, n := range ns {
+		n.cfg.MaxFileMB = 16
+	}
+	waitRole(t, n1, RoleClient, "node0")
+	waitRole(t, n2, RoleClient, "node0")
+	blob := make([]byte, 5<<20)
+	if _, err := rand.Read(blob); err != nil {
+		t.Fatal(err)
+	}
+	want := sha256.Sum256(blob)
+	n1.drop(t, "node0", "music/track.mp3", string(blob))
+	n1.drop(t, "node2", "music/track.mp3", string(blob)) // relayed via node0, pulled by node2
+	for _, tc := range []struct {
+		n    *testNode
+		from string
+	}{{n0, "node1"}, {n2, "node1"}} {
+		p := inbox(tc.n, tc.from, "music/track.mp3")
+		waitFor(t, "binary at "+p, 30*time.Second, func() bool {
+			b, err := os.ReadFile(p)
+			return err == nil && len(b) == len(blob) && sha256.Sum256(b) == want
+		})
+	}
 }
 
 func TestTooLarge(t *testing.T) {

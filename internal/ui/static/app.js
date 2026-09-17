@@ -105,18 +105,42 @@
       view.innerHTML = `<div class="card"><div class="empty">${hints[folder]}</div></div>`; return;
     }
     const who = folder === 'inbox' ? 'From' : folder === 'forward' ? 'For' : 'To';
-    let html = `<div class="card"><table><tr><th>${who}</th><th>File</th><th>Size</th><th>When</th>${folder === 'failed' ? '<th>Reason</th>' : ''}<th></th></tr>`;
+    // Group files that share a top-level folder (a message with attachments).
+    const groups = new Map();
     items.forEach((m, i) => {
-      html += `<tr class="row"><td><b>${esc(m.peer)}</b>${m.origin ? '<div class="small muted">from ' + esc(m.origin) + '</div>' : ''}</td>
-        <td><a href="#" data-open="${i}">${esc(m.name.replace(/^([^/]+)\//, folder === 'forward' ? '' : '$1/'))}</a></td>
+      const disp = folder === 'forward' ? m.name.replace(/^[^/]+\//, '') : m.name;
+      const key = disp.includes('/') ? m.peer + '|' + disp.split('/')[0] : '';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push({ m, i, disp });
+    });
+    const icon = k => ({ text: '📄', image: '🖼', pdf: '📕', audio: '🎵', video: '🎬' }[k] || '📦');
+    const rowHTML = ({ m, i, disp }, inGroup) => `<tr class="row${inGroup ? ' row--in' : ''}"><td>${inGroup ? '' : `<b>${esc(m.peer)}</b>${m.origin ? '<div class="small muted">from ' + esc(m.origin) + '</div>' : ''}`}</td>
+        <td>${icon(m.kind)} <a href="#" data-open="${i}">${esc(inGroup ? disp.split('/').slice(1).join('/') : disp)}</a></td>
         <td class="muted">${fmtSize(m.size)}</td><td class="muted small">${fmtTime(m.time)}</td>
         ${folder === 'failed' ? `<td class="small">${esc(m.error)}</td>` : ''}
-        <td class="actions">${m.kind !== 'other' ? `<button class="btn btn--ghost btn--sm" data-open="${i}">Open</button>` : ''}<a class="btn btn--ghost btn--sm" href="${fileURL(m)}" download>Download</a>${folder === 'inbox' ? `<button class="btn btn--ghost btn--sm" data-reply="${i}">Reply</button>` : ''}${folder === 'failed' ? `<button class="btn btn--ghost btn--sm" data-retry="${i}">Retry</button>` : ''}<button class="btn btn--danger btn--sm" data-del="${i}">Delete</button></td></tr>`;
-    });
+        <td class="actions">${m.kind !== 'other' ? `<button class="btn btn--ghost btn--sm" data-open="${i}">${m.kind === 'audio' || m.kind === 'video' ? 'Play' : 'Open'}</button>` : ''}<a class="btn btn--ghost btn--sm" href="${fileURL(m)}" download>Download</a>${folder === 'inbox' && !inGroup ? `<button class="btn btn--ghost btn--sm" data-reply="${i}">Reply</button>` : ''}${folder === 'failed' ? `<button class="btn btn--ghost btn--sm" data-retry="${i}">Retry</button>` : ''}<button class="btn btn--danger btn--sm" data-del="${i}">Delete</button></td></tr>`;
+    let html = `<div class="card"><table><tr><th>${who}</th><th>File</th><th>Size</th><th>When</th>${folder === 'failed' ? '<th>Reason</th>' : ''}<th></th></tr>`;
+    const groupList = [];
+    for (const [key, rows] of groups) {
+      if (!key) { rows.forEach(r => html += rowHTML(r, false)); continue; }
+      const gi = groupList.length; groupList.push(rows);
+      const m0 = rows[0].m, total = rows.reduce((a, r) => a + r.m.size, 0), newest = rows.map(r => r.m.time).sort().pop();
+      html += `<tr class="row row--group"><td><b>${esc(m0.peer)}</b>${m0.origin ? '<div class="small muted">from ' + esc(m0.origin) + '</div>' : ''}</td>
+        <td>📁 <b>${esc(rows[0].disp.split('/')[0])}</b> <span class="muted small">${rows.length} file(s)</span></td>
+        <td class="muted">${fmtSize(total)}</td><td class="muted small">${fmtTime(newest)}</td>${folder === 'failed' ? '<td></td>' : ''}
+        <td class="actions">${folder === 'inbox' ? `<button class="btn btn--ghost btn--sm" data-reply="${rows[0].i}">Reply</button>` : ''}<button class="btn btn--danger btn--sm" data-delgroup="${gi}">Delete all</button></td></tr>`;
+      rows.forEach(r => html += rowHTML(r, true));
+    }
     html += `</table></div>`;
     view.innerHTML = html;
     view.querySelectorAll('[data-open]').forEach(el => el.onclick = e => { e.preventDefault(); openMail(items[el.dataset.open]); });
     view.querySelectorAll('[data-del]').forEach(el => el.onclick = () => delMail(items[el.dataset.del], folder));
+    view.querySelectorAll('[data-delgroup]').forEach(el => el.onclick = async () => {
+      const rows = groupList[el.dataset.delgroup];
+      if (!confirm(`Delete all ${rows.length} file(s) in "${rows[0].disp.split('/')[0]}"?`)) return;
+      try { for (const r of rows) await post('/api/delete', { folder: r.m.folder, peer: r.m.peer, name: r.m.name }); toast('Deleted ' + rows.length + ' file(s)', 'ok'); renderFolder(folder); loadOverview(); }
+      catch (e) { toast(e.message, 'err'); }
+    });
     view.querySelectorAll('[data-reply]').forEach(el => el.onclick = () => { location.hash = '#compose'; setTimeout(() => { const s = $('#to'); if (s) s.value = items[el.dataset.reply].peer; }, 50); });
     view.querySelectorAll('[data-retry]').forEach(el => el.onclick = () => retryMail(items[el.dataset.retry]));
   }
@@ -127,6 +151,8 @@
     let body;
     if (m.kind === 'image') body = `<div class="preview"><img src="${url}" alt=""></div>`;
     else if (m.kind === 'pdf') body = `<div class="preview"><iframe src="${url}"></iframe></div>`;
+    else if (m.kind === 'audio') body = `<div class="preview preview--media">🎵 <audio controls autoplay src="${url}" style="width:100%"></audio></div>`;
+    else if (m.kind === 'video') body = `<div class="preview"><video controls autoplay src="${url}" style="width:100%;max-height:60vh;border-radius:8px;background:#000"></video></div>`;
     else {
       try { const t = await (await fetch(url)).text(); body = `<div class="preview"><pre>${esc(t)}</pre></div>`; }
       catch (e) { body = `<div class="empty">${esc(e.message)}</div>`; }
@@ -152,46 +178,86 @@
     } catch (e) { toast(e.message, 'err'); }
   }
 
+  // Upload with progress (fetch cannot report upload progress).
+  function upload(fd, onProgress) {
+    return new Promise((resolve, reject) => {
+      const x = new XMLHttpRequest();
+      x.open('POST', '/api/send');
+      x.setRequestHeader('X-AMail-UI', '1');
+      x.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+      x.onload = () => { let b = {}; try { b = JSON.parse(x.responseText); } catch (e) { } x.status < 300 ? resolve(b) : reject(new Error(b.error || x.statusText)); };
+      x.onerror = () => reject(new Error('upload failed'));
+      x.send(fd);
+    });
+  }
+  // Walk dropped folders (DataTransferItem.webkitGetAsEntry) into File objects with relative paths.
+  async function collectDropped(dt) {
+    const out = [];
+    const walk = (entry, prefix) => new Promise(res => {
+      if (entry.isFile) entry.file(f => { out.push({ file: f, path: prefix + f.name }); res(); }, res);
+      else if (entry.isDirectory) { const r = entry.createReader(); const all = []; const read = () => r.readEntries(async es => { if (!es.length) { for (const e of all) await walk(e, prefix + entry.name + '/'); res(); } else { all.push(...es); read(); } }, res); read(); }
+      else res();
+    });
+    const items = [...(dt.items || [])];
+    const entries = items.map(i => i.webkitGetAsEntry ? i.webkitGetAsEntry() : null);
+    if (entries.some(Boolean)) { for (const e of entries) if (e) await walk(e, ''); }
+    else [...dt.files].forEach(f => out.push({ file: f, path: f.name }));
+    return out;
+  }
+  const safeName = s => s.replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const stamp = () => { const d = new Date(), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; };
+
   function renderCompose() {
     const peers = (overview?.peers || []).filter(p => p.id !== overview.node_id);
     const opts = peers.map(p => `<option value="${esc(p.id)}">${esc(p.id)}${p.host ? '' : ' (via server)'}</option>`).join('');
     view.innerHTML = `<div class="card"><form class="form" id="compose">
       <div class="grid2">
         <div class="field"><label>To (node id)</label><input list="peers" id="to" required placeholder="ausa-web" pattern="[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"><datalist id="peers">${opts}</datalist><span class="hint">Must be on the whitelist. Unknown ids end up in Failed.</span></div>
-        <div class="field"><label>File name for the note (optional)</label><input id="name" placeholder="note-2026-09-17.txt"></div>
+        <div class="field"><label>Subject (optional)</label><input id="subject" placeholder="Site photos for the new page"><span class="hint">With a subject, the note and attachments arrive together in one folder named after it.</span></div>
       </div>
       <div class="field"><label>Note</label><textarea id="text" placeholder="Type a message. It is saved as a .txt file in the other node's inbox."></textarea></div>
-      <div class="field"><label>Attach files</label>
-        <div class="drop" id="drop">Drop files here or click to choose<input type="file" id="files" multiple hidden></div>
+      <div class="field"><label>Attachments: documents, images, music, video, archives, anything</label>
+        <div class="drop" id="drop">Drop files or folders here, or click to choose files<input type="file" id="files" multiple hidden><input type="file" id="folder" webkitdirectory hidden></div>
+        <div class="row-actions" style="margin-top:6px"><button type="button" class="btn btn--ghost btn--sm" id="pick-folder">Attach a folder</button><button type="button" class="btn btn--ghost btn--sm" id="clear-files">Clear</button><span class="muted small" id="filesum"></span></div>
         <div class="filelist" id="filelist"></div>
-        <span class="hint">Each file goes to outbox/&lt;to&gt;/ and is delivered by the running node. Folders: copy them into the outbox folder directly.</span>
+        <span class="hint">Files up to ${overview ? (overview.max_mailbox_mb ? '' : '') : ''}the receiving node's max_file_mb (1 GB by default). Folder structure is kept.</span>
       </div>
-      <div class="row-actions"><button class="btn" type="submit">Send</button><span class="muted small" id="compose-status"></span></div>
+      <div class="row-actions"><button class="btn" type="submit">Send</button><progress id="prog" max="100" value="0" hidden style="width:220px"></progress><span class="muted small" id="compose-status"></span></div>
     </form></div>`;
-    const drop = $('#drop'), input = $('#files'), list = $('#filelist');
-    let files = [];
-    const show = () => list.innerHTML = files.map(f => `<span>${esc(f.name)} · ${fmtSize(f.size)}</span>`).join('');
+    const drop = $('#drop'), input = $('#files'), folder = $('#folder'), list = $('#filelist');
+    let files = []; // {file, path}
+    const show = () => {
+      list.innerHTML = files.slice(0, 200).map(f => `<span title="${esc(f.path)}">${esc(f.path.length > 48 ? '…' + f.path.slice(-46) : f.path)} · ${fmtSize(f.file.size)}</span>`).join('') + (files.length > 200 ? `<span>… and ${files.length - 200} more</span>` : '');
+      $('#filesum').textContent = files.length ? `${files.length} file(s), ${fmtSize(files.reduce((a, f) => a + f.file.size, 0))}` : '';
+    };
     drop.onclick = () => input.click();
-    input.onchange = () => { files = files.concat([...input.files]); show(); };
+    input.onchange = () => { files = files.concat([...input.files].map(f => ({ file: f, path: f.name }))); input.value = ''; show(); };
+    folder.onchange = () => { files = files.concat([...folder.files].map(f => ({ file: f, path: f.webkitRelativePath || f.name }))); folder.value = ''; show(); };
+    $('#pick-folder').onclick = () => folder.click();
+    $('#clear-files').onclick = () => { files = []; show(); };
     drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
     drop.ondragleave = () => drop.classList.remove('over');
-    drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); files = files.concat([...e.dataTransfer.files]); show(); };
+    drop.ondrop = async e => { e.preventDefault(); drop.classList.remove('over'); files = files.concat(await collectDropped(e.dataTransfer)); show(); };
     $('#compose').onsubmit = async e => {
       e.preventDefault();
-      const to = $('#to').value.trim(), text = $('#text').value, name = $('#name').value.trim();
-      const btn = e.target.querySelector('button'); btn.disabled = true; $('#compose-status').textContent = 'Sending…';
+      const to = $('#to').value.trim(), text = $('#text').value, subject = safeName($('#subject').value);
+      const btn = e.target.querySelector('button[type=submit]'), prog = $('#prog'), status = $('#compose-status');
+      if (!text.trim() && !files.length) { toast('Nothing to send: write a note or attach something.', 'err'); return; }
+      // Group into one folder when there is a subject, or a note with attachments, or several files.
+      const group = subject || (text.trim() && files.length) || files.length > 1 ? `${subject || 'message'}-${stamp()}` : '';
+      btn.disabled = true; status.textContent = 'Sending…'; prog.hidden = false; prog.value = 0;
       try {
         let n = 0;
-        if (text.trim()) { await post('/api/send', { to, text, name }); n++; }
+        if (text.trim()) { await post('/api/send', { to, text, name: (group ? group + '/' : '') + (subject ? safeName(subject) + '.txt' : 'note-' + stamp() + '.txt') }); n++; }
         if (files.length) {
-          const fd = new FormData(); fd.append('to', to); files.forEach(f => fd.append('files', f, f.name));
-          const r = await api('/api/send', { method: 'POST', body: fd }); n += r.queued.length;
+          const fd = new FormData(); fd.append('to', to); if (group) fd.append('prefix', group);
+          files.forEach(f => { fd.append('path', f.path); fd.append('files', f.file, f.file.name); });
+          const r = await upload(fd, p => { prog.value = Math.round(p * 100); status.textContent = `Uploading ${Math.round(p * 100)}%`; }); n += r.queued.length;
         }
-        if (!n) throw new Error('Nothing to send: write a note or attach a file.');
-        toast(`Queued ${n} item(s) for ${to}`, 'ok'); $('#text').value = ''; files = []; show(); loadOverview();
-        $('#compose-status').textContent = `Queued. Watch Outbox → Sent.`;
-      } catch (err) { toast(err.message, 'err'); $('#compose-status').textContent = ''; }
-      btn.disabled = false;
+        toast(`Queued ${n} item(s) for ${to}${group ? ' in "' + group + '"' : ''}`, 'ok'); $('#text').value = ''; $('#subject').value = ''; files = []; show(); loadOverview();
+        status.textContent = 'Queued. Watch Outbox → Sent.';
+      } catch (err) { toast(err.message, 'err'); status.textContent = ''; }
+      prog.hidden = true; btn.disabled = false;
     };
   }
 

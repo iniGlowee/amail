@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.1 (2026-09-17)
+
+* Attachments in the UI: drag in files **or folders** (structure kept),
+  "Attach a folder" picker, upload progress bar, a Subject that groups the
+  note and its attachments into one folder on the receiving side. Folder
+  views show grouped messages with "Delete all".
+* Audio and video preview with seeking (range requests); a built-in MIME
+  table for media so Linux servers without `/etc/mime.types` still serve
+  the right type.
+* Integrity test: a 5 MB random blob delivered direct and relayed must
+  match by SHA-256.
+
 ## 0.2.0 (2026-09-17)
 
 * **Local web UI**, embedded in the binary, styled after the Geex admin

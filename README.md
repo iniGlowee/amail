@@ -97,6 +97,25 @@ requests without the `X-AMail-UI` header, so other web pages in your browser
 cannot talk to it. On a server, reach it with an SSH tunnel:
 `ssh -L 4445:127.0.0.1:4445 user@host` then open `http://127.0.0.1:4445`.
 
+## Attachments: documents, images, music, video, anything
+
+AMail moves bytes, not "mail": a PDF, a PNG, an MP3, a 900 MB video or a
+ZIP all travel the same way and arrive as the same file, byte for byte (the
+test suite checks a random 5 MB blob with SHA-256, direct and relayed).
+
+* **From the folders**: copy anything into `outbox/<node>/`. A whole folder
+  tree is fine; it arrives with the same structure under `inbox/<you>/`.
+* **From the UI**: Compose lets you type a note and drag in files or entire
+  folders, or click "Attach a folder". Give it a subject and the note plus
+  its attachments arrive together in one folder named after the subject,
+  for example `inbox/austin-pc/Site photos-20260917-103000/`. The inbox
+  shows such a message as one group with "Delete all".
+* **Preview**: text, images and PDFs open inline; audio and video play in
+  the browser (with seeking); everything else downloads.
+* **Limits**: `max_file_mb` on the receiving node (1 GB default). Bigger
+  files get a clear "refuses files over N MB" in `failed/`, so raise the
+  limit on both sides for very large transfers.
+
 ## The mailbox folders
 
 Everything is a plain folder. Use Explorer, Finder, `cp`, a cron job, a PHP

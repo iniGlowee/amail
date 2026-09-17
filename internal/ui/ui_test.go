@@ -97,11 +97,27 @@ func TestMailFlow(t *testing.T) {
 	if res.StatusCode != 200 {
 		t.Fatalf("upload: %d %s", res.StatusCode, b)
 	}
+	// a grouped message: prefix + per-file relative paths (a dropped folder)
+	buf.Reset()
+	mw = multipart.NewWriter(&buf)
+	_ = mw.WriteField("to", "beta")
+	_ = mw.WriteField("prefix", "Trip photos-20260917")
+	_ = mw.WriteField("path", "album/one.jpg")
+	fw, _ := mw.CreateFormFile("files", "one.jpg")
+	_, _ = fw.Write([]byte{0xff, 0xd8, 0xff})
+	_ = mw.WriteField("path", "../../escape.jpg")
+	fw, _ = mw.CreateFormFile("files", "escape.jpg")
+	_, _ = fw.Write([]byte{1})
+	mw.Close()
+	res, b = call(t, ts, "POST", "/api/send", &buf, map[string]string{"Content-Type": mw.FormDataContentType()})
+	if res.StatusCode != 200 && !strings.Contains(string(b), "..") {
+		t.Fatalf("grouped upload: %d %s", res.StatusCode, b)
+	}
 	// list outbox
 	res, b = call(t, ts, "GET", "/api/mail?folder=outbox", nil, nil)
 	var items []Mail
 	_ = json.Unmarshal(b, &items)
-	if res.StatusCode != 200 || len(items) != 3 {
+	if res.StatusCode != 200 || len(items) < 4 {
 		t.Fatalf("outbox list: %d %s", res.StatusCode, b)
 	}
 	names := map[string]bool{}
@@ -111,8 +127,17 @@ func TestMailFlow(t *testing.T) {
 			t.Fatalf("peer %q", it.Peer)
 		}
 	}
-	if !names["hi.txt"] || !names["a.txt"] || !names["evil.txt"] {
+	if !names["hi.txt"] || !names["a.txt"] || !names["evil.txt"] || !names["Trip photos-20260917/album/one.jpg"] {
 		t.Fatalf("names: %v", names)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.Mailbox, "escape.jpg")); err == nil {
+		t.Fatal("path traversal via path field")
+	}
+	if kindOf("song.mp3") != "audio" || kindOf("clip.mp4") != "video" || kindOf("x.zip") != "other" {
+		t.Fatal("kindOf media")
+	}
+	if !strings.HasPrefix(contentType("song.flac"), "audio/") {
+		t.Fatal("contentType flac")
 	}
 	if _, err := os.Stat(filepath.Join(cfg.Mailbox, "evil.txt")); err == nil {
 		t.Fatal("path traversal in upload name")

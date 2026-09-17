@@ -84,3 +84,8 @@ Rollback: `sudo systemctl disable --now amail@ec2-user; sudo rm /usr/local/bin/a
 - **2026-09-17 (0.2.0)**: web UI verified in a browser on `austin-pc`: overview with live peer table,
   inbox preview modal, compose (note delivered to `ausa-web` in ~10 s), settings save with in-place node
   restart, log view, light and dark themes. API guards covered by `internal/ui/ui_test.go`.
+- **2026-09-17 (0.2.1)**: attachments round trip. A PNG, a WAV and a 7 MB binary uploaded through the UI
+  API as one grouped message (`Media test-20260917/` with sub folders) to `ausa-web`, copied back into the
+  server's outbox, pulled by `austin-pc`; SHA-256 of all three matched the originals on both ends. Inbox
+  shows the group with per-file Open / Play / Download. `TestBinaryIntegrity` covers 5 MB random data
+  direct and relayed.
