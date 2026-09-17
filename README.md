@@ -55,6 +55,8 @@ New member? Follow [docs/JOINING.md](docs/JOINING.md), it is written for you.
 **Build from source**
 
 ```bash
+go install github.com/iniGlowee/amail/cmd/amail@v0.3.0   # quickest: puts amail in $GOPATH/bin
+# or
 git clone https://github.com/iniGlowee/amail.git && cd amail
 go build -o amail ./cmd/amail          # this platform
 sh scripts/build.sh 0.3.0              # or scripts\build.ps1: all platforms into dist/ + SHA256SUMS
