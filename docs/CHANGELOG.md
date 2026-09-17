@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0 (2026-09-17)
+
+* **AMail to e-mail**: the gateway now also watches the node's inbox for
+  files whose first line is `#email [to:addr] Subject`, builds an RFC 822
+  message (body, plus sibling files of `message.txt` as attachments) and
+  hands it to a sendmail-style `send_command`. Origin allow-list, recipient
+  allow-list with `to:` override, size cap, receipts back to the origin,
+  retry on command failure, optional delete after send. Either gateway
+  direction can run alone.
+
 ## 0.4.0 (2026-09-17)
 
 * **E-mail gateway** (`amail gateway --config FILE [--once] [--init]`):

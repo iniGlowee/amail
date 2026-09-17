@@ -119,6 +119,59 @@ no plain-text part), `headers.txt` and the attachments with their original
 names (sanitised for the receiving OS; duplicates get ` (2)`). In the web UI
 it shows as one grouped message.
 
+## The other direction: AMail to e-mail
+
+The same gateway can send. Put a text file into an AMail node whose
+**first line** is
+
+```
+#email [to:someone@example.com] Subject text here
+```
+
+and, when it arrives in the gateway node's inbox, the rest of the file is
+sent as the e-mail body with that subject. Use it from your PC by writing a
+note in Compose (or dropping a `.txt` into `outbox/<gateway-node>/`) that
+starts with `#email ...`. If the note has attachments (a message folder with
+`message.txt`), every other file in the folder is attached to the e-mail;
+`headers.txt` is skipped.
+
+Rules, mirroring the inbound side:
+
+* Only nodes in `email_origins` may trigger mail; anyone else's `#email`
+  file is refused (and told so by receipt).
+* Recipients are `email_to` unless the first line carries `to:addr`, and an
+  override must be on `email_allowed_to` (default: the same as `email_to`).
+* `email_max_mb` (default 7) caps body plus attachments; Amazon SES refuses
+  raw messages over 10 MB.
+* The message is handed on stdin to `send_command` with the recipients as
+  arguments, sendmail style. `ses-send.sh` (SES with an instance role),
+  `msmtp`, `/usr/sbin/sendmail` all fit. The gateway holds no credentials.
+* A receipt lands in `outbox/<origin>/email-receipt-<time>.txt`, so the
+  sender sees "sent, id ..." or "NOT sent, reason ..." in their inbox.
+* A failed send (command error) is retried on the next poll; a refused one
+  (bad recipient, too big, wrong origin) is not.
+* `email_delete_after_send` removes the source from the inbox after a
+  successful send; default false, so the gateway node keeps a copy.
+
+Config keys for this side, in the same JSON:
+
+```json
+{
+  "inbox": "/home/amail/AMail/inbox",
+  "email_from": "info@example.com",
+  "email_to": ["you@example.com"],
+  "email_allowed_to": ["you@example.com", "friend@example.net"],
+  "email_origins": ["your-pc"],
+  "send_command": ["/home/you/Tools/ses-send.sh"],
+  "email_max_mb": 7,
+  "email_receipt": true,
+  "email_delete_after_send": false
+}
+```
+
+Either side can be configured alone: leave out `maildir` for send-only,
+leave out `inbox`/`send_command` for receive-only.
+
 ## Limits and notes
 
 * Inline images referenced by HTML are saved as attachments; the HTML is

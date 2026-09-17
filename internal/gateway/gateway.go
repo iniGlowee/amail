@@ -54,6 +54,8 @@ type Config struct {
 	MaxMB          int      `json:"max_mb"`       // largest message to convert
 	PollSeconds    int      `json:"poll_seconds"` // 0 = run once
 	State          string   `json:"state"`        // file remembering processed message ids
+
+	Outbound // AMail -> e-mail, optional (see outbound.go)
 }
 
 // Default returns a config with sensible defaults.
@@ -83,18 +85,25 @@ func Load(path string) (*Config, error) {
 	return c, c.Validate()
 }
 
-// Validate checks the config.
+// Validate checks the config. Inbound (maildir -> outbox) and outbound
+// (inbox -> e-mail) are each optional, but at least one must be set up.
 func (c *Config) Validate() error {
-	if c.Maildir == "" || c.Outbox == "" {
-		return errors.New("gateway config needs maildir and outbox")
+	inbound := c.Maildir != ""
+	if !inbound && !c.outboundEnabled() {
+		return errors.New("gateway config needs maildir (e-mail -> AMail) and/or inbox + send_command (AMail -> e-mail)")
 	}
-	if len(c.AllowedSenders) == 0 {
-		return errors.New("gateway config needs at least one allowed sender (an address or @domain); an open gateway would let anyone put files on your machines")
+	if inbound {
+		if c.Outbox == "" {
+			return errors.New("gateway config needs outbox with maildir")
+		}
+		if len(c.AllowedSenders) == 0 {
+			return errors.New("gateway config needs at least one allowed sender (an address or @domain); an open gateway would let anyone put files on your machines")
+		}
+		if !strings.HasPrefix(c.Tag, "#") {
+			return errors.New("tag should start with '#' so ordinary subjects never match")
+		}
 	}
-	if !strings.HasPrefix(c.Tag, "#") {
-		return errors.New("tag should start with '#' so ordinary subjects never match")
-	}
-	return nil
+	return c.validateOutbound()
 }
 
 // Gateway converts qualifying mail.
@@ -102,6 +111,8 @@ type Gateway struct {
 	cfg  *Config
 	log  *log.Logger
 	seen map[string]bool
+	// Send overrides the send command (tests).
+	Send SendFunc
 }
 
 // New builds a gateway.
@@ -134,12 +145,19 @@ type Result struct {
 
 // Run polls until ctx is done (or once when PollSeconds is 0).
 func (g *Gateway) Run(stop <-chan struct{}) {
-	g.log.Printf("gateway: watching %s for %q subjects from %v -> %s", g.cfg.Maildir, g.cfg.Tag, g.cfg.AllowedSenders, g.cfg.Outbox)
+	if g.cfg.Maildir != "" {
+		g.log.Printf("gateway: e-mail -> AMail: watching %s for %q subjects from %v -> %s", g.cfg.Maildir, g.cfg.Tag, g.cfg.AllowedSenders, g.cfg.Outbox)
+	}
+	if g.cfg.outboundEnabled() {
+		g.log.Printf("gateway: AMail -> e-mail: watching %s for %q files from %v -> %v via %s", g.cfg.Inbox, EmailTag, g.cfg.EmailOrigins, g.cfg.EmailTo, g.cfg.SendCommand[0])
+	}
 	for {
 		for _, r := range g.Once() {
 			switch r.Status {
 			case "converted":
 				g.log.Printf("gateway: %s -> %s (%s)", filepath.Base(r.File), r.To, r.Dest)
+			case "sent":
+				g.log.Printf("gateway: e-mailed %s to %s (id %s)", r.File, r.To, r.Dest)
 			case "rejected", "error":
 				g.log.Printf("gateway: %s %s: %s", filepath.Base(r.File), r.Status, r.Reason)
 			}
@@ -158,6 +176,15 @@ func (g *Gateway) Run(stop <-chan struct{}) {
 // Once scans new/ and cur/ one time and returns what happened to each
 // message it had not seen before.
 func (g *Gateway) Once() []Result {
+	var out []Result
+	if g.cfg.Maildir != "" {
+		out = append(out, g.inboundOnce()...)
+	}
+	out = append(out, g.emailOnce()...)
+	return out
+}
+
+func (g *Gateway) inboundOnce() []Result {
 	var out []Result
 	var files []string
 	for _, d := range []string{"new", "cur"} {

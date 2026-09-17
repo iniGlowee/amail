@@ -170,7 +170,9 @@ e-mails with `#amail <node-id>` in the subject into AMail messages: the body
 becomes `message.txt`, attachments come along, and the node delivers the
 folder to `<node-id>`. Only allow-listed senders whose mail passes SPF or
 DKIM are accepted, and an optional secret word can be required in the
-subject. Details in [docs/GATEWAY.md](docs/GATEWAY.md).
+subject. The same gateway works the other way: a note whose first line is
+`#email Subject here` sent to that node goes out as an e-mail, attachments
+included. Details in [docs/GATEWAY.md](docs/GATEWAY.md).
 
 ## The mailbox folders
 
