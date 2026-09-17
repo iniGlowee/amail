@@ -10,9 +10,9 @@ import (
 	"os"
 	"time"
 
-	"amail/internal/config"
-	"amail/internal/keys"
-	"amail/internal/proto"
+	"github.com/iniGlowee/amail/internal/config"
+	"github.com/iniGlowee/amail/internal/keys"
+	"github.com/iniGlowee/amail/internal/proto"
 )
 
 // IdleTimeout closes a connection with no progress for this long.

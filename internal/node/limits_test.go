@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"amail/internal/mailbox"
+	"github.com/iniGlowee/amail/internal/mailbox"
 )
 
 func TestLimiter(t *testing.T) {

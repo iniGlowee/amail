@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	"amail/internal/config"
+	"github.com/iniGlowee/amail/internal/config"
 )
 
 // FreeBytes reports the free space on the volume holding path. It is a

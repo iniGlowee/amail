@@ -2,6 +2,10 @@
 
 ## 0.3.0 (2026-09-17)
 
+Module path is `github.com/iniGlowee/amail` (a dot-less module name made the
+Go toolchain on CI look for `amail/internal/...` in the standard library).
+`go install github.com/iniGlowee/amail/cmd/amail@v0.3.0` now works.
+
 Security release. Wire format is additive (protocol 1) but 0.3 nodes
 require the origin proof, so upgrade every node together.
 

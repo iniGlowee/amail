@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"amail/internal/config"
-	"amail/internal/mailbox"
+	"github.com/iniGlowee/amail/internal/config"
+	"github.com/iniGlowee/amail/internal/mailbox"
 )
 
 func newServer(t *testing.T) (*Server, *config.Config, *httptest.Server) {

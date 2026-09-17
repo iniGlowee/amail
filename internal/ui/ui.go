@@ -28,11 +28,11 @@ import (
 	"sync"
 	"time"
 
-	"amail/internal/config"
-	"amail/internal/keys"
-	"amail/internal/mailbox"
-	"amail/internal/node"
-	"amail/internal/proto"
+	"github.com/iniGlowee/amail/internal/config"
+	"github.com/iniGlowee/amail/internal/keys"
+	"github.com/iniGlowee/amail/internal/mailbox"
+	"github.com/iniGlowee/amail/internal/node"
+	"github.com/iniGlowee/amail/internal/proto"
 )
 
 //go:embed static
