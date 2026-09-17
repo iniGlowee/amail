@@ -23,7 +23,7 @@ forwarding, no router changes, no firewall rules.
 
 **Option A, download a release** (recommended, no build tools)
 
-1. On the repository's *Releases* page download the file for your machine
+1. On the Releases page, https://github.com/iniGlowee/amail/releases, download the file for your machine
    and the checksum list:
    `amail-<version>-windows-amd64.exe`, or `amail-<version>-linux-amd64`,
    or `amail-<version>-linux-arm64`, plus `SHA256SUMS`.
@@ -71,7 +71,7 @@ forwarding, no router changes, no firewall rules.
 **Option B, build it yourself**
 
 ```bash
-git clone <repository url> && cd amail
+git clone https://github.com/iniGlowee/amail.git && cd amail
 go build -o amail ./cmd/amail        # add .exe on Windows
 go test ./...                        # optional, about 90 s
 ```
