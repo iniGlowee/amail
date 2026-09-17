@@ -93,6 +93,11 @@ sending the same file twice.
 `hops+1` in the sidecar and sends that value onward; a node refuses to hold a
 file that has already made 3 hops.
 
+Every file also carries an origin proof (SHA-256, the origin's signature
+over destination + name + size + hash, and the origin's certificate). Relays
+store it in the sidecar and pass it on; receivers verify it before storing.
+See SECURITY.md section 4.
+
 ## Folders
 
 ```

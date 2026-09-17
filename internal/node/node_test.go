@@ -16,6 +16,7 @@ import (
 	"amail/internal/config"
 	"amail/internal/keys"
 	"amail/internal/mailbox"
+	"amail/internal/proto"
 )
 
 type testNode struct {
@@ -320,6 +321,130 @@ func TestBinaryIntegrity(t *testing.T) {
 			return err == nil && len(b) == len(blob) && sha256.Sum256(b) == want
 		})
 	}
+}
+
+// rawDeliver speaks the protocol directly so tests can send malformed or
+// forged headers that the real client would never produce.
+func rawDeliver(t *testing.T, from *testNode, to config.Peer, h proto.Header, body string) error {
+	t.Helper()
+	mat, _ := keys.Load(from.home)
+	c := NewClient(mat)
+	c.Timeout = 2 * time.Second
+	conn, err := c.dial(context.Background(), to)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	h.Type, h.From, h.Size = proto.TypeDeliver, from.id, int64(len(body))
+	if err := conn.Send(&h, nil, 0); err != nil {
+		return err
+	}
+	if _, _, err := conn.Expect(proto.TypeOK); err != nil {
+		return err
+	}
+	if err := conn.Send(&proto.Header{Type: proto.TypeBody, Size: h.Size}, strings.NewReader(body), h.Size); err != nil {
+		return err
+	}
+	_, _, err = conn.Expect(proto.TypeOK)
+	return err
+}
+
+func sha(s string) string { h := sha256.Sum256([]byte(s)); return fmt.Sprintf("%x", h) }
+
+func TestForgedOriginAndTamperedContentRejected(t *testing.T) {
+	ns := newNet(t, []bool{true, true, false})
+	n0, n1 := ns[0], ns[1]
+	waitRole(t, n1, RoleClient, "node0")
+	server := n1.cfg.Whitelist[0]
+	mat1, _ := keys.Load(n1.home)
+
+	// 1. no hash at all
+	err := rawDeliver(t, n1, server, proto.Header{Origin: "node1", To: "node0", Name: "nohash.txt"}, "x")
+	if !proto.IsReject(err) {
+		t.Fatalf("missing sha256 accepted: %v", err)
+	}
+	// 2. content altered after hashing
+	err = rawDeliver(t, n1, server, proto.Header{Origin: "node1", To: "node0", Name: "tampered.txt", SHA256: sha("original")}, "altered!")
+	if !proto.IsReject(err) || !strings.Contains(err.Error(), "SHA-256") {
+		t.Fatalf("tampered content accepted: %v", err)
+	}
+	// 3. node1 claims the file came from node2, with no signature
+	err = rawDeliver(t, n1, server, proto.Header{Origin: "node2", To: "node0", Name: "forged.txt", SHA256: sha("hi")}, "hi")
+	if !proto.IsReject(err) || !strings.Contains(err.Error(), "signature") {
+		t.Fatalf("forged origin accepted: %v", err)
+	}
+	// 4. node1 signs with its own key but presents its own cert while claiming node2
+	data := keys.Canonical("node2", "node0", "forged2.txt", 2, sha("hi"))
+	sig, _ := mat1.Sign(data)
+	err = rawDeliver(t, n1, server, proto.Header{Origin: "node2", To: "node0", Name: "forged2.txt", SHA256: sha("hi"), Sig: sig, OriginCert: mat1.CertPEM()}, "hi")
+	if !proto.IsReject(err) || !strings.Contains(err.Error(), "node1") {
+		t.Fatalf("forged origin with wrong cert accepted: %v", err)
+	}
+	// 5. a properly signed relayed file from node2 (node1 relays it) is accepted
+	mat2, _ := keys.Load(ns[2].home)
+	data = keys.Canonical("node2", "node0", "real.txt", 2, sha("hi"))
+	sig, _ = mat2.Sign(data)
+	err = rawDeliver(t, n1, server, proto.Header{Origin: "node2", To: "node0", Name: "real.txt", SHA256: sha("hi"), Sig: sig, OriginCert: mat2.CertPEM()}, "hi")
+	if err != nil {
+		t.Fatalf("valid relayed file rejected: %v", err)
+	}
+	waitFile(t, inbox(n0, "node2", "real.txt"), "hi")
+	// 6. same signature, different name: signature no longer matches
+	err = rawDeliver(t, n1, server, proto.Header{Origin: "node2", To: "node0", Name: "renamed.txt", SHA256: sha("hi"), Sig: sig, OriginCert: mat2.CertPEM()}, "hi")
+	if !proto.IsReject(err) {
+		t.Fatalf("renamed file with stale signature accepted: %v", err)
+	}
+	for _, bad := range []string{"nohash.txt", "tampered.txt", "forged.txt", "forged2.txt", "renamed.txt"} {
+		if _, err := os.Stat(inbox(n0, "node1", bad)); err == nil {
+			t.Fatalf("%s landed in the inbox", bad)
+		}
+		if _, err := os.Stat(inbox(n0, "node2", bad)); err == nil {
+			t.Fatalf("%s landed in node2's inbox folder", bad)
+		}
+	}
+}
+
+func TestRevocationGossip(t *testing.T) {
+	ns := newNet(t, []bool{true, true, true})
+	n0, n1, n2 := ns[0], ns[1], ns[2]
+	waitRole(t, n1, RoleClient, "node0")
+	waitRole(t, n2, RoleClient, "node0")
+	mat1, _ := keys.Load(n1.home)
+	serial := keys.Serial(mat1.Cert.Leaf)
+
+	// The operator revokes node1 on the server only.
+	n0.node.learnRevoked("operator", []string{serial})
+	// node1 is refused by the server at the TLS layer.
+	waitFor(t, "server refuses node1", 10*time.Second, func() bool {
+		_, err := n1.node.cli.Status(context.Background(), n1.cfg.Whitelist[0])
+		return err != nil && strings.Contains(err.Error(), "tls")
+	})
+	// node2 learns the revocation through its normal contact with the server
+	// and refuses node1 directly, without anyone touching node2.
+	waitFor(t, "node2 learns revocation", 15*time.Second, func() bool { return n2.node.isRevoked(serial) })
+	if _, err := n1.node.cli.Status(context.Background(), n1.cfg.Whitelist[2]); err == nil {
+		t.Fatal("node2 still accepts the revoked node1")
+	}
+	// and it is persisted in node2's config
+	saved, err := config.Load(n2.home)
+	if err != nil || !saved.IsRevoked(serial) {
+		t.Fatalf("revocation not persisted: %v", err)
+	}
+	// node1 also refuses to talk to a peer that presents a revoked cert (node1 itself is fine here);
+	// a fresh key for node1 works again once installed.
+	n1.stop()
+	root := filepath.Dir(n1.home)
+	b, err := keys.Issue(filepath.Join(root, "ca"), "node1", 30, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := keys.Install(n1.home, b); err != nil {
+		t.Fatal(err)
+	}
+	start(t, n1)
+	waitRole(t, n1, RoleClient, "node0")
+	n1.drop(t, "node0", "after-reissue.txt", "new key works")
+	waitFile(t, inbox(n0, "node1", "after-reissue.txt"), "new key works")
 }
 
 func TestTooLarge(t *testing.T) {

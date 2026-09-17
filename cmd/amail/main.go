@@ -55,17 +55,22 @@ Node commands
   peers [--merge]                                    list the server's whitelist, optionally adding unknown nodes to ours
   whitelist list | add <id> [host[:port]] [--note ..] | remove <id>
   blacklist list | add <id-or-host-or-cidr> [--reason ..] | remove <id-or-host>
+  revoked list | add <serial> | remove <serial>      certificate serials this node refuses (spread to peers automatically)
   config                                             show where everything lives
   version
 
 Operator commands (the person who runs the network)
   ca init --name NETWORK                             create the network certificate authority in <home>/ca
-  ca issue <node-id> [--out FILE] [--days N]         issue a key bundle for a node
-  ca list                                            show issued keys
+  ca issue <node-id> [--out FILE] [--days N] [--protect]   issue a key bundle (--protect seals it with $AMAIL_KEY_PASS)
+  ca revoke <node-id> [--serial HEX]                 revoke a node's certificate(s); the network learns by gossip
+  ca protect | unprotect                             seal / unseal the CA private key with $AMAIL_CA_PASS
+  ca list                                            show issued and revoked keys
 
 Environment
-  AMAIL_HOME    node home (default %%APPDATA%%\AMail on Windows, ~/.amail elsewhere)
-  AMAIL_DEBUG   set to 1 for chatty delivery logs
+  AMAIL_HOME      node home (default %%APPDATA%%\AMail on Windows, ~/.amail elsewhere)
+  AMAIL_DEBUG     set to 1 for chatty delivery logs
+  AMAIL_CA_PASS   passphrase of a protected CA key (operator)
+  AMAIL_KEY_PASS  passphrase of a sealed .amailkey bundle (ca issue --protect / join)
 `
 
 func main() {
@@ -114,6 +119,8 @@ func main() {
 		err = cmdWhitelist(home, rest)
 	case "blacklist":
 		err = cmdBlacklist(home, rest)
+	case "revoked":
+		err = cmdRevoked(home, rest)
 	case "config":
 		err = cmdConfig(home)
 	case "ca":
@@ -270,7 +277,11 @@ func cmdJoin(home string, args []string) error {
 	if len(args) != 1 {
 		return errors.New("usage: amail join <file.amailkey>")
 	}
-	b, err := keys.ReadBundle(args[0])
+	pass := os.Getenv(keys.KeyPassEnv)
+	if keys.BundleSealed(args[0]) && pass == "" {
+		return fmt.Errorf("%s is passphrase-protected: set %s=<passphrase> and run again", args[0], keys.KeyPassEnv)
+	}
+	b, err := keys.ReadBundle(args[0], pass)
 	if err != nil {
 		return err
 	}
@@ -340,7 +351,7 @@ func cmdRun(home string) error {
 	restartCh := make(chan struct{}, 1)
 	var srv *ui.Server
 	if !ui.Off(cfg0.UIListen) {
-		srv = &ui.Server{Home: home, Version: version, Restart: func() {
+		srv = &ui.Server{Home: home, Version: version, AllowRemote: cfg0.UIAllowRemote, Restart: func() {
 			select {
 			case restartCh <- struct{}{}:
 			default:
@@ -407,7 +418,7 @@ func cmdUI(home string, args []string) error {
 		}
 	}
 	url := "http://" + *addr
-	srv := &ui.Server{Home: home, Version: version}
+	srv := &ui.Server{Home: home, Version: version, AllowRemote: cfg.UIAllowRemote}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ln, err := net.Listen("tcp", *addr)
@@ -442,6 +453,7 @@ func cmdStatus(home string, args []string) error {
 	}
 	cli := node.NewClient(mat)
 	cli.Timeout = 5 * time.Second
+	cli.Revoked = cfg.IsRevoked
 	want := map[string]bool{}
 	for _, id := range ids {
 		want[id] = true
@@ -593,6 +605,7 @@ func cmdPeers(home string, args []string) error {
 	}
 	cli := node.NewClient(mat)
 	cli.Timeout = 5 * time.Second
+	cli.Revoked = cfg.IsRevoked
 	sp, _, err := findServer(cfg, cli)
 	if err != nil {
 		return err
@@ -773,6 +786,54 @@ func cmdBlacklist(home string, args []string) error {
 	return fmt.Errorf("unknown blacklist action %q", args[0])
 }
 
+func cmdRevoked(home string, args []string) error {
+	cfg, err := config.Load(home)
+	if err != nil {
+		return err
+	}
+	if len(args) == 0 {
+		args = []string{"list"}
+	}
+	switch args[0] {
+	case "list", "ls":
+		if len(cfg.RevokedSerials) == 0 {
+			fmt.Println("no revoked certificates known")
+			return nil
+		}
+		for _, s := range cfg.RevokedSerials {
+			fmt.Println(s)
+		}
+		return nil
+	case "add":
+		if len(args) < 2 {
+			return errors.New("usage: amail revoked add <serial-hex> [...]")
+		}
+		n := cfg.AddRevoked(args[1:]...)
+		if err := cfg.Save(); err != nil {
+			return err
+		}
+		fmt.Printf("added %d serial(s); the running node spreads them to every peer it talks to\n", n)
+		return nil
+	case "remove", "rm":
+		if len(args) != 2 {
+			return errors.New("usage: amail revoked remove <serial-hex>")
+		}
+		kept := cfg.RevokedSerials[:0]
+		for _, s := range cfg.RevokedSerials {
+			if s != strings.ToLower(args[1]) {
+				kept = append(kept, s)
+			}
+		}
+		cfg.RevokedSerials = kept
+		if err := cfg.Save(); err != nil {
+			return err
+		}
+		fmt.Println("removed locally (other nodes will teach it back unless they remove it too)")
+		return nil
+	}
+	return fmt.Errorf("unknown revoked action %q", args[0])
+}
+
 // --- config ---------------------------------------------------------------
 
 func cmdConfig(home string) error {
@@ -819,16 +880,24 @@ func cmdCA(home string, args []string) error {
 	case "issue":
 		fs := flag.NewFlagSet("ca issue", flag.ContinueOnError)
 		out := fs.String("out", "", "output file (default <node-id>.amailkey)")
-		days := fs.Int("days", 3650, "validity in days")
+		days := fs.Int("days", keys.DefaultValidDays, "validity in days")
 		by := fs.String("by", OperatorName, "issuer name recorded in the bundle")
+		protect := fs.Bool("protect", false, "seal the bundle with the passphrase in "+keys.KeyPassEnv)
 		rest, err := parseMixed(fs, args[1:])
 		if err != nil {
 			return err
 		}
 		if len(rest) != 1 {
-			return errors.New("usage: amail ca issue <node-id> [--out FILE] [--days N]")
+			return errors.New("usage: amail ca issue <node-id> [--out FILE] [--days N] [--protect]")
 		}
 		id := rest[0]
+		pass := ""
+		if *protect {
+			pass = os.Getenv(keys.KeyPassEnv)
+			if len(pass) < 8 {
+				return fmt.Errorf("--protect needs %s set to a passphrase of at least 8 characters", keys.KeyPassEnv)
+			}
+		}
 		b, err := keys.Issue(dir, id, *days, *by)
 		if err != nil {
 			return err
@@ -836,19 +905,100 @@ func cmdCA(home string, args []string) error {
 		if *out == "" {
 			*out = id + ".amailkey"
 		}
-		if err := keys.WriteBundle(b, *out); err != nil {
+		if err := keys.WriteBundle(b, *out, pass); err != nil {
 			return err
 		}
 		fmt.Printf("Issued key for %q on network %q -> %s (expires %s)\n", id, b.Network, *out, b.Expires)
-		fmt.Println("Send that file to the node's owner. They install it with: amail join", *out)
+		if pass != "" {
+			fmt.Printf("The file is sealed. Tell the owner the passphrase separately; they run: %s=... amail join %s\n", keys.KeyPassEnv, *out)
+		} else {
+			fmt.Println("Send that file to the node's owner over a channel you trust (it holds a private key). They install it with: amail join", *out)
+			fmt.Println("Tip: --protect seals it with a passphrase so it can travel by email.")
+		}
 		fmt.Println("Remind everyone to add the new node: amail whitelist add", id, "[host]")
+		return nil
+	case "revoke":
+		fs := flag.NewFlagSet("ca revoke", flag.ContinueOnError)
+		serial := fs.String("serial", "", "revoke this serial only (default: every certificate issued to the id)")
+		rest, err := parseMixed(fs, args[1:])
+		if err != nil {
+			return err
+		}
+		if len(rest) != 1 {
+			return errors.New("usage: amail ca revoke <node-id> [--serial HEX]")
+		}
+		id := rest[0]
+		var serials []string
+		if *serial != "" {
+			serials = []string{strings.ToLower(*serial)}
+		} else {
+			b, err := os.ReadFile(filepath.Join(dir, keys.IssuedLog))
+			if err != nil {
+				return fmt.Errorf("no issued.log in %s", dir)
+			}
+			for _, line := range strings.Split(string(b), "\n") {
+				f := strings.Split(line, "\t")
+				if len(f) >= 3 && f[1] == id && strings.HasPrefix(f[2], "serial=") {
+					serials = append(serials, strings.ToLower(strings.TrimPrefix(f[2], "serial=")))
+				}
+			}
+			if len(serials) == 0 {
+				return fmt.Errorf("no certificate issued to %q found in issued.log; use --serial", id)
+			}
+		}
+		rf, err := os.OpenFile(filepath.Join(dir, "revoked.txt"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			return err
+		}
+		for _, s := range serials {
+			fmt.Fprintf(rf, "%s\t%s\t%s\n", s, id, time.Now().UTC().Format(time.RFC3339))
+		}
+		_ = rf.Close()
+		// Start the gossip from this machine's own node, if it has one.
+		if cfg, err := config.Load(home); err == nil {
+			n := cfg.AddRevoked(serials...)
+			if err := cfg.Save(); err != nil {
+				return err
+			}
+			fmt.Printf("Revoked %d certificate(s) of %q; %d added to this node's list. Every node learns it on its next contact with a node that knows.\n", len(serials), id, n)
+		} else {
+			fmt.Printf("Revoked %d certificate(s) of %q. Add them on a node with: amail revoked add <serial>\n", len(serials), id)
+		}
+		for _, s := range serials {
+			fmt.Println("  ", s)
+		}
+		fmt.Printf("If %s should stay on the network, issue it a fresh key: amail ca issue %s\n", id, id)
+		return nil
+	case "protect", "unprotect":
+		pass := os.Getenv(keys.CAPassEnv)
+		if len(pass) < 8 {
+			return fmt.Errorf("set %s to a passphrase of at least 8 characters first", keys.CAPassEnv)
+		}
+		if args[0] == "protect" {
+			if err := keys.ProtectCA(dir, pass); err != nil {
+				return err
+			}
+			fmt.Printf("CA key sealed. From now on 'amail ca issue' and 'amail ca revoke' need %s. Keep the passphrase somewhere safe: without it the network can issue no new keys.\n", keys.CAPassEnv)
+			return nil
+		}
+		if err := keys.UnprotectCA(dir, pass); err != nil {
+			return err
+		}
+		fmt.Println("CA key is now stored in the clear again.")
 		return nil
 	case "list":
 		info, err := keys.LoadCAInfo(dir)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Network %q, CA valid until %s\n", info.Network, info.NotAfter.Format("2006-01-02"))
+		sealedNote := "key stored in the clear (consider: amail ca protect)"
+		if keys.CASealed(dir) {
+			sealedNote = "key passphrase-protected"
+		}
+		fmt.Printf("Network %q, CA valid until %s, %s\n", info.Network, info.NotAfter.Format("2006-01-02"), sealedNote)
+		if rb, err := os.ReadFile(filepath.Join(dir, "revoked.txt")); err == nil {
+			fmt.Printf("Revoked:\n%s", rb)
+		}
 		b, err := os.ReadFile(filepath.Join(dir, keys.IssuedLog))
 		if err != nil {
 			fmt.Println("no keys issued yet")

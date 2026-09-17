@@ -15,4 +15,7 @@ echo "building amail ${VERSION}"
 build windows amd64 .exe
 build linux   amd64 ""
 build linux   arm64 ""
+# Checksums so a downloaded binary can be verified against the release page.
+( cd dist && (sha256sum amail-"${VERSION}"-* 2>/dev/null || shasum -a 256 amail-"${VERSION}"-*) > SHA256SUMS )
+echo "  dist/SHA256SUMS"
 echo "done"

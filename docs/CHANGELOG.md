@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.3.0 (2026-09-17)
+
+Security release. Wire format is additive (protocol 1) but 0.3 nodes
+require the origin proof, so upgrade every node together.
+
+* **Origin signatures and content hashes**: every file carries its SHA-256,
+  an ECDSA signature by the origin over (origin, to, name, size, hash) and
+  the origin's certificate. Receivers verify chain, id, revocation and
+  signature, and hash the content while writing. Relays can no longer forge
+  a sender or alter a file. Rejected items go to the sender's `failed/`.
+* **Revocation**: `amail ca revoke <id>`; serials gossip on every request
+  and reply, are persisted in `revoked_serials`, and are enforced at the
+  TLS layer in both directions. `amail revoked list|add|remove`.
+* **Keys at rest / in transit**: `amail ca protect` seals the CA key;
+  `amail ca issue --protect` seals bundles (PBKDF2-HMAC-SHA256 600k +
+  AES-256-GCM, standard library). Node key permission warning on Linux.
+  Default certificate validity 3 years (was 10).
+* **TLS**: X25519 / P-256 only, session tickets disabled, server-side
+  revocation check, 90 s idle timeout instead of a 30 min deadline.
+* **Members**: `max_peer_req_per_min` (600) request limit per node id.
+* **UI**: Content-Security-Policy, `X-Frame-Options: DENY`, refuses
+  non-loopback binding unless `ui_allow_remote`; revoked list shown in
+  Settings.
+* **Build / CI**: `dist/SHA256SUMS`; govulncheck in CI; Go 1.24 minimum.
+* **Tests**: protocol fuzzer, sealing round trips, signature suite, forged
+  origin / tampered content (6 cases), revocation gossip with re-issue.
+* **Docs**: `docs/SECURITY.md` threat model and checklist; PROTOCOL and
+  OPERATOR updated.
+
 ## 0.2.1 (2026-09-17)
 
 * Attachments in the UI: drag in files **or folders** (structure kept),

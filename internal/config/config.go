@@ -72,20 +72,23 @@ type Block struct {
 
 // Config is the node configuration (config.json in the AMail home).
 type Config struct {
-	NodeID           string  `json:"node_id"`
-	Listen           string  `json:"listen"`
-	UIListen         string  `json:"ui_listen"` // local web UI served by `amail run`; "off" disables
-	Mailbox          string  `json:"mailbox"`
-	ServerEligible   bool    `json:"server_eligible"`
-	PollSeconds      int     `json:"poll_seconds"`
-	DiscoverySeconds int     `json:"discovery_seconds"`
-	MaxFileMB        int     `json:"max_file_mb"`
-	MaxMailboxMB     int     `json:"max_mailbox_mb"`     // cap on inbox+forward+failed (received data)
-	MinFreeMB        int     `json:"min_free_mb"`        // refuse files when the disk has less free
-	MaxConnections   int     `json:"max_connections"`    // concurrent inbound connections
-	MaxPerIPPerMin   int     `json:"max_per_ip_per_min"` // failed handshakes per source IP per minute
-	Whitelist        []Peer  `json:"whitelist"`
-	Blacklist        []Block `json:"blacklist"`
+	NodeID           string   `json:"node_id"`
+	Listen           string   `json:"listen"`
+	UIListen         string   `json:"ui_listen"` // local web UI served by `amail run`; "off" disables
+	Mailbox          string   `json:"mailbox"`
+	ServerEligible   bool     `json:"server_eligible"`
+	PollSeconds      int      `json:"poll_seconds"`
+	DiscoverySeconds int      `json:"discovery_seconds"`
+	MaxFileMB        int      `json:"max_file_mb"`
+	MaxMailboxMB     int      `json:"max_mailbox_mb"`            // cap on inbox+forward+failed (received data)
+	MinFreeMB        int      `json:"min_free_mb"`               // refuse files when the disk has less free
+	MaxConnections   int      `json:"max_connections"`           // concurrent inbound connections
+	MaxPerIPPerMin   int      `json:"max_per_ip_per_min"`        // failed handshakes per source IP per minute
+	MaxPeerReqPerMin int      `json:"max_peer_req_per_min"`      // requests per authenticated peer per minute
+	UIAllowRemote    bool     `json:"ui_allow_remote,omitempty"` // let ui_listen bind a non-loopback address
+	Whitelist        []Peer   `json:"whitelist"`
+	Blacklist        []Block  `json:"blacklist"`
+	RevokedSerials   []string `json:"revoked_serials"` // certificate serials (hex) refused everywhere
 
 	// Home is the directory this config was loaded from. Not serialised.
 	Home string `json:"-"`
@@ -133,8 +136,10 @@ func Default(home, nodeID string) *Config {
 		MinFreeMB:        512,
 		MaxConnections:   64,
 		MaxPerIPPerMin:   20,
+		MaxPeerReqPerMin: 600,
 		Whitelist:        []Peer{},
 		Blacklist:        []Block{},
+		RevokedSerials:   []string{},
 		Home:             home,
 	}
 }
@@ -197,12 +202,46 @@ func (c *Config) normalise() {
 	if c.MaxPerIPPerMin <= 0 {
 		c.MaxPerIPPerMin = 20
 	}
+	if c.MaxPeerReqPerMin <= 0 {
+		c.MaxPeerReqPerMin = 600
+	}
 	if c.Whitelist == nil {
 		c.Whitelist = []Peer{}
 	}
 	if c.Blacklist == nil {
 		c.Blacklist = []Block{}
 	}
+	if c.RevokedSerials == nil {
+		c.RevokedSerials = []string{}
+	}
+	for i, s := range c.RevokedSerials {
+		c.RevokedSerials[i] = strings.ToLower(strings.TrimSpace(s))
+	}
+}
+
+// IsRevoked reports whether a certificate serial (hex) is on the list.
+func (c *Config) IsRevoked(serial string) bool {
+	serial = strings.ToLower(strings.TrimSpace(serial))
+	for _, s := range c.RevokedSerials {
+		if s == serial {
+			return true
+		}
+	}
+	return false
+}
+
+// AddRevoked adds serials to the list; returns how many were new.
+func (c *Config) AddRevoked(serials ...string) int {
+	added := 0
+	for _, s := range serials {
+		s = strings.ToLower(strings.TrimSpace(s))
+		if s == "" || len(s) > 64 || c.IsRevoked(s) {
+			continue
+		}
+		c.RevokedSerials = append(c.RevokedSerials, s)
+		added++
+	}
+	return added
 }
 
 // Save writes the config to its home directory.

@@ -287,6 +287,9 @@
         <table class="list-edit" id="wl"><tr><th>#</th><th>Id</th><th>Host</th><th>Port</th><th>Note</th><th></th></tr></table>
         <div class="row-actions" style="margin-top:10px"><button type="button" class="btn btn--ghost btn--sm" id="wl-add">+ Add node</button></div>
       </div>
+      <div class="card"><h3>Revoked certificates <span class="muted small">(learned from peers automatically; manage with <code>amail ca revoke</code> / <code>amail revoked</code>)</span></h3>
+        ${(c.revoked_serials || []).length ? `<div class="mono small">${(c.revoked_serials || []).map(esc).join('<br>')}</div>` : '<div class="muted small">none</div>'}
+      </div>
       <div class="card"><h3>Blacklist</h3>
         <table class="list-edit" id="bl"><tr><th>Node id</th><th>Host / IP / CIDR</th><th>Reason</th><th></th></tr></table>
         <div class="row-actions" style="margin-top:10px"><button type="button" class="btn btn--ghost btn--sm" id="bl-add">+ Add entry</button></div>

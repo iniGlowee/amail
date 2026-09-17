@@ -89,3 +89,12 @@ Rollback: `sudo systemctl disable --now amail@ec2-user; sudo rm /usr/local/bin/a
   server's outbox, pulled by `austin-pc`; SHA-256 of all three matched the originals on both ends. Inbox
   shows the group with per-file Open / Play / Download. `TestBinaryIntegrity` covers 5 MB random data
   direct and relayed.
+
+## Security tests (0.3.0)
+
+| Package | What is covered |
+|---|---|
+| `internal/keys` | passphrase sealing round trip, wrong passphrase and tampering refused, sealed CA blocks issue without `AMAIL_CA_PASS`, sealed bundles, signature verify / wrong key / wrong id / revoked / foreign CA |
+| `internal/node` | `TestForgedOriginAndTamperedContentRejected`: missing hash, altered content, forged origin without signature, forged origin with the wrong certificate, valid relayed signature accepted, stale signature after rename. `TestRevocationGossip`: revoke on the server only, a third node learns and refuses, persistence, re-issue works |
+| `internal/proto` | `FuzzRecv`: 3 M inputs in 25 s with no panic on 2026-09-17; run longer with `go test ./internal/proto -fuzz=FuzzRecv -fuzztime=60s` |
+| supply chain | `govulncheck ./...`: no vulnerabilities (2026-09-17, Go 1.27); runs in CI on every push |

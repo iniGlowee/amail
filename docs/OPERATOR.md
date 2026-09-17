@@ -51,14 +51,39 @@ ids and hosts the server knows about.
 
 ## 4. Reissue, revoke, remove
 
-* **Lost or leaked key**: there is no revocation list in v1. Blacklist the id
-  on every node (`amail blacklist add <id> --reason leaked`), then issue a
-  new key under a *new* id. The old certificate will still handshake but is
-  refused at the blacklist check on every node that has the entry.
-* **Expiry**: node keys last 10 years by default (`--days`). The node logs a
+* **Lost or leaked key**: `amail ca revoke <id>`. The serial goes into
+  `ca/revoked.txt` and into your own node's list; from there every node
+  learns it on its next contact (within about 30 s across the reachable
+  network) and refuses that certificate at the TLS layer. Then, if the
+  machine should stay on the network, `amail ca issue <id>` and `amail join`
+  the new bundle there. No whitelist changes needed.
+* **Expiry**: node keys last 3 years by default (`--days`). The node logs a
   warning 30 days before expiry. Issue a new bundle with the same id; `amail
-  join` overwrites the old one.
-* **Retire a node**: remove it from every whitelist. Nothing else to do.
+  join` overwrites the old one; revoke the old serial (`amail ca list` shows
+  it).
+* **Retire a node**: revoke it and remove it from every whitelist.
+* **Check**: `amail revoked list` on any node shows what it knows.
+
+## 4b. Protect the CA and the bundles
+
+```bash
+export AMAIL_CA_PASS='a long passphrase kept in your password manager'   # PowerShell: $env:AMAIL_CA_PASS='...'
+amail ca protect                       # seals ca/ca.key (PBKDF2 + AES-256-GCM); issue/revoke need the passphrase from now on
+
+export AMAIL_KEY_PASS='one-time passphrase for this bundle'
+amail ca issue laptop --protect        # laptop.amailkey is sealed; email the file, send the passphrase another way
+```
+
+On the receiving machine: `AMAIL_KEY_PASS='...' amail join laptop.amailkey`,
+then delete the file. Details and rationale in `SECURITY.md`.
+
+## 4c. If the CA key itself is lost or leaked
+
+The network cannot grow or revoke without it. Migrate: `amail ca init --name
+<newname>` in a fresh home, issue every node a new bundle, have each node
+`amail join` it (the join replaces `keys/ca.crt` too), restart the nodes.
+Nodes with the old CA can no longer handshake with nodes on the new one, so
+do it in one sitting.
 
 ## 5. Opening the port
 

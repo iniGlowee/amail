@@ -61,6 +61,16 @@ type Header struct {
 	Msg    string     `json:"msg,omitempty"`    // human readable note
 	Status *Status    `json:"status,omitempty"`
 	Peers  []PeerInfo `json:"peers,omitempty"`
+
+	// End-to-end authenticity (deliver / item): SHA-256 of the content,
+	// the origin's signature over keys.Canonical(...) and the origin's
+	// certificate so a receiver can verify through any number of relays.
+	SHA256     string `json:"sha256,omitempty"`
+	Sig        string `json:"sig,omitempty"`
+	OriginCert string `json:"origin_cert,omitempty"`
+
+	// Revoked certificate serials this node knows about; peers merge them.
+	Revoked []string `json:"revoked,omitempty"`
 }
 
 // Status is the answer to a status request.

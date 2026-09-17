@@ -51,6 +51,8 @@ type Server struct {
 	// Restart, when set, is called after settings are saved so the daemon
 	// can reload. Nil in the standalone `amail ui`.
 	Restart func()
+	// AllowRemote permits binding a non-loopback address (config ui_allow_remote).
+	AllowRemote bool
 
 	mu    sync.Mutex
 	local StatusSource
@@ -118,6 +120,8 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; frame-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -139,8 +143,26 @@ func (s *Server) hostAllowed(host string) bool {
 	return bh == host
 }
 
-// ListenAndServe runs the UI until ctx is cancelled.
+// IsLoopback reports whether a listen address binds only to this machine.
+func IsLoopback(addr string) bool {
+	h, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if h == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
+}
+
+// ListenAndServe runs the UI until ctx is cancelled. Non-loopback
+// addresses are refused unless AllowRemote is set: the UI has no login and
+// controls the node completely.
 func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
+	if !IsLoopback(addr) && !s.AllowRemote {
+		return fmt.Errorf("refusing to serve the UI on %s: it has no login; keep it on 127.0.0.1 (or set ui_allow_remote and put it behind something that authenticates)", addr)
+	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err

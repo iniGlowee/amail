@@ -158,12 +158,15 @@ amail send <node-id> <file> [file ...]                   queue files in outbox/
 amail peers [--merge]                                    the server's whitelist; --merge adds new ones to yours
 amail whitelist list | add <id> [host[:port]] | remove <id>
 amail blacklist list | add <id|host|cidr> [--reason ..] | remove <x>
+amail revoked list | add <serial> | remove <serial>      revoked certificate serials (gossiped)
 amail config                                             where everything lives
 amail version
 
 amail ca init --name NETWORK                             (operator) create the network CA
-amail ca issue <node-id> [--out FILE] [--days N]         (operator) issue a node key
-amail ca list                                            (operator) issued keys
+amail ca issue <node-id> [--out F] [--days N] [--protect] (operator) issue a node key, optionally sealed
+amail ca revoke <node-id> [--serial HEX]                 (operator) revoke; the network learns by gossip
+amail ca protect | unprotect                             (operator) seal the CA key with $AMAIL_CA_PASS
+amail ca list                                            (operator) issued and revoked keys
 ```
 
 `--home DIR` before the command, or `AMAIL_HOME`, points at a different node
@@ -204,28 +207,32 @@ retried forever.
 
 ## Security model, honestly
 
-* Every connection is TLS 1.3 with **mutual** authentication against the
-  network CA. Nothing without a key issued by the operator can even complete
-  a handshake. Every byte is encrypted in transit.
-* Inside the network, every node is trusted. A relaying node holds files in
-  the clear in its `forward/` folder. Do not use AMail for secrets you would
-  not hand to every machine on the network.
-* Whitelist = who this node will talk to. Blacklist = who it refuses (by node
-  id, host, IP or CIDR), checked before anything else. An empty whitelist
-  means "anyone holding a network key".
-* The key bundle contains the node's private key. Treat `.amailkey` files
-  like passwords: send them over a channel you trust and delete them after
-  `amail join`.
-* Flood protection runs before the TLS handshake: at most `max_connections`
-  (64) open connections, a quarter of that per source IP, and
-  `max_per_ip_per_min` (20) *failed* handshakes per IP per minute. Members
-  are never throttled; strangers hitting the port cost the node a closed
-  socket and one log line per minute.
-* Inside the network, sender attribution is trust-based: relaying requires
-  the `origin` field, so a member could claim another member's name. The
-  history log always records the node that actually connected.
-* On Linux run the daemon as a dedicated account with no sudo (the installer
-  creates one); the unit file adds `MemoryMax=128M` and kernel containment.
+Full write-up with threat model and checklist: [docs/SECURITY.md](docs/SECURITY.md).
+
+* **Tunnel**: every connection is TLS 1.3 only, with **mutual** certificate
+  authentication against the network CA, forward secrecy, no session
+  resumption. Nothing without a key issued by the operator completes a
+  handshake; nothing on the wire is readable or replayable.
+* **Identity**: node id = certificate CN, checked in both directions. A
+  wrong or hijacked IP cannot be answered by a different node.
+* **Revocation**: `amail ca revoke <id>` spreads to every node by gossip on
+  their normal traffic and is enforced at the TLS layer within about a
+  discovery interval.
+* **End-to-end authenticity**: the origin signs every file (destination,
+  name, size, SHA-256) and its certificate travels with it. Relays can
+  neither forge a sender nor alter, rename or re-address a file; a receiver
+  hashes the content while writing and refuses mismatches.
+* **Still trusted-member**: a relay can *read* what it holds. Do not use
+  AMail for secrets you would not hand to the server node. Per-recipient
+  encryption is the documented next step.
+* **Keys at rest**: `amail ca protect` seals the CA key with a passphrase;
+  `amail ca issue --protect` seals bundles so they can travel by email;
+  node keys are 0600 and the daemon runs as a sudo-less user.
+* **Flood protection** before TLS (connection caps, failed-handshake ban)
+  and after TLS (per-peer request limit, size, mailbox and disk caps, idle
+  timeout).
+* **Whitelist / blacklist**: who this node talks to, and who it refuses (id,
+  host, IP, CIDR), checked before anything else.
 
 ## For the operator (Austin Armas)
 
@@ -283,7 +290,8 @@ docs/                DESIGN, PROTOCOL, OPERATOR, TESTING, CHANGELOG
 
 * [docs/DESIGN.md](docs/DESIGN.md): roles, election, routing, hops, folders.
 * [docs/PROTOCOL.md](docs/PROTOCOL.md): the wire protocol on port 4444.
-* [docs/OPERATOR.md](docs/OPERATOR.md): running the network and issuing keys.
+* [docs/SECURITY.md](docs/SECURITY.md): threat model, what is and is not protected, checklist.
+* [docs/OPERATOR.md](docs/OPERATOR.md): running the network, issuing, protecting and revoking keys.
 * [docs/TESTING.md](docs/TESTING.md): automated tests and the live test plan.
 * [docs/CHANGELOG.md](docs/CHANGELOG.md).
 

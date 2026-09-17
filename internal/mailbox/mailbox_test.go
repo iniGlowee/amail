@@ -37,11 +37,11 @@ func TestReceiveUniqueAndHold(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p1, err := m.Receive("alice", "notes/hello.txt", strings.NewReader("one"), 3)
+	p1, err := m.Receive("alice", "notes/hello.txt", strings.NewReader("one"), 3, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	p2, err := m.Receive("alice", "notes/hello.txt", strings.NewReader("two"), 3)
+	p2, err := m.Receive("alice", "notes/hello.txt", strings.NewReader("two"), 3, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestReceiveUniqueAndHold(t *testing.T) {
 	if b, _ := os.ReadFile(p2); string(b) != "two" {
 		t.Fatalf("content: %q", b)
 	}
-	if _, err := m.Receive("alice", "short.bin", strings.NewReader("abc"), 10); err == nil {
+	if _, err := m.Receive("alice", "short.bin", strings.NewReader("abc"), 10, ""); err == nil {
 		t.Fatal("short body should fail")
 	}
 	if n, _ := filepath.Glob(filepath.Join(m.Dir(DirInbox), "alice", tmpPrefix+"*")); len(n) != 0 {
@@ -124,5 +124,25 @@ func TestOutgoingAndMoves(t *testing.T) {
 	in, out, fw := m.Counts()
 	if in != 0 || out != 0 || fw != 0 {
 		t.Fatalf("counts %d %d %d", in, out, fw)
+	}
+}
+
+func TestReceiveHashCheck(t *testing.T) {
+	m, err := Open(filepath.Join(t.TempDir(), "mb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	good := "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08" // sha256("test")
+	if _, err := m.Receive("a", "t.txt", strings.NewReader("test"), 4, good); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Receive("a", "bad.txt", strings.NewReader("tesT"), 4, good); err != ErrHashMismatch {
+		t.Fatalf("expected hash mismatch, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(m.Dir(DirInbox), "a", "bad.txt")); err == nil {
+		t.Fatal("mismatched file became visible")
+	}
+	if n, _ := filepath.Glob(filepath.Join(m.Dir(DirInbox), "a", tmpPrefix+"*")); len(n) != 0 {
+		t.Fatal("temp file left behind")
 	}
 }

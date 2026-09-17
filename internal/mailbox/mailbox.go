@@ -13,6 +13,8 @@
 package mailbox
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -102,6 +104,11 @@ type Item struct {
 	ID           string
 	ReceivedFrom string
 	Held         bool // true when the item lives in forward/
+
+	// Origin authenticity, carried unchanged through relays.
+	SHA256     string
+	Sig        string
+	OriginCert string
 }
 
 // Meta is the sidecar stored next to a held file.
@@ -112,6 +119,23 @@ type Meta struct {
 	Hops         int    `json:"hops"`
 	ReceivedFrom string `json:"received_from"`
 	ReceivedAt   string `json:"received_at"`
+	SHA256       string `json:"sha256,omitempty"`
+	Sig          string `json:"sig,omitempty"`
+	OriginCert   string `json:"origin_cert,omitempty"`
+}
+
+// FileSHA256 returns the lower-case hex SHA-256 of a file.
+func FileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 const readme = `This folder is managed by AMail (Armas Mail).
@@ -245,9 +269,14 @@ func uniquePath(dir, base string) string {
 	}
 }
 
+// ErrHashMismatch is returned when a file's content does not match the
+// SHA-256 it was announced with. The file never becomes visible.
+var ErrHashMismatch = errors.New("content does not match its SHA-256")
+
 // writeUnique streams size bytes into dir/base (or a "(2)" variant if that
-// exists) via a temp file, and returns the final path.
-func writeUnique(dir, base string, r io.Reader, size int64) (string, error) {
+// exists) via a temp file, and returns the final path. When wantSHA is set
+// the content is hashed while it is written and rejected on mismatch.
+func writeUnique(dir, base string, r io.Reader, size int64, wantSHA string) (string, error) {
 	if err := os.MkdirAll(dir, dirPerm); err != nil {
 		return "", err
 	}
@@ -256,13 +285,21 @@ func writeUnique(dir, base string, r io.Reader, size int64) (string, error) {
 		return "", err
 	}
 	tmpName := tmp.Name()
-	n, err := io.Copy(tmp, io.LimitReader(r, size))
+	var w io.Writer = tmp
+	h := sha256.New()
+	if wantSHA != "" {
+		w = io.MultiWriter(tmp, h)
+	}
+	n, err := io.Copy(w, io.LimitReader(r, size))
 	cerr := tmp.Close()
 	if err == nil {
 		err = cerr
 	}
 	if err == nil && n != size {
 		err = fmt.Errorf("short body: got %d of %d bytes", n, size)
+	}
+	if err == nil && wantSHA != "" && !strings.EqualFold(hex.EncodeToString(h.Sum(nil)), wantSHA) {
+		err = ErrHashMismatch
 	}
 	if err != nil {
 		_ = os.Remove(tmpName)
@@ -286,8 +323,9 @@ func split(name string) (string, string) {
 	return filepath.Dir(native), filepath.Base(native)
 }
 
-// Receive stores an incoming file under inbox/<from>/<name>.
-func (m *Mailbox) Receive(from, name string, r io.Reader, size int64) (string, error) {
+// Receive stores an incoming file under inbox/<from>/<name>. wantSHA, when
+// set, must match the content or nothing is stored.
+func (m *Mailbox) Receive(from, name string, r io.Reader, size int64, wantSHA string) (string, error) {
 	if from == "" || config.ValidID(from) != nil {
 		from = "unknown"
 	}
@@ -296,7 +334,7 @@ func (m *Mailbox) Receive(from, name string, r io.Reader, size int64) (string, e
 		return "", err
 	}
 	sub, base := split(clean)
-	path, err := writeUnique(filepath.Join(m.Root, DirInbox, from, sub), base, r, size)
+	path, err := writeUnique(filepath.Join(m.Root, DirInbox, from, sub), base, r, size, wantSHA)
 	if err == nil {
 		m.addUsage(size)
 	}
@@ -304,7 +342,7 @@ func (m *Mailbox) Receive(from, name string, r io.Reader, size int64) (string, e
 }
 
 // Hold stores a file for another node under forward/<to>/<origin>/<name>
-// together with its metadata sidecar.
+// together with its metadata sidecar. meta.SHA256, when set, is verified.
 func (m *Mailbox) Hold(to, origin, name string, r io.Reader, size int64, meta Meta) (string, error) {
 	if err := config.ValidID(to); err != nil {
 		return "", err
@@ -317,7 +355,7 @@ func (m *Mailbox) Hold(to, origin, name string, r io.Reader, size int64, meta Me
 		return "", err
 	}
 	sub, base := split(clean)
-	path, err := writeUnique(filepath.Join(m.Root, DirForward, to, origin, sub), base, r, size)
+	path, err := writeUnique(filepath.Join(m.Root, DirForward, to, origin, sub), base, r, size, meta.SHA256)
 	if err != nil {
 		return "", err
 	}
@@ -424,6 +462,7 @@ func (m *Mailbox) Held(to string) []Item {
 				var meta Meta
 				if json.Unmarshal(js, &meta) == nil {
 					it.ID, it.Hops, it.ReceivedFrom = meta.ID, meta.Hops, meta.ReceivedFrom
+					it.SHA256, it.Sig, it.OriginCert = meta.SHA256, meta.Sig, meta.OriginCert
 				}
 			}
 			items = append(items, it)
@@ -620,5 +659,5 @@ func (m *Mailbox) Drop(to, src string) (string, error) {
 	if st.IsDir() {
 		return "", fmt.Errorf("%s is a folder; copy it into %s yourself", src, filepath.Join(m.Dir(DirOutbox), to))
 	}
-	return writeUnique(filepath.Join(m.Dir(DirOutbox), to), filepath.Base(src), f, st.Size())
+	return writeUnique(filepath.Join(m.Dir(DirOutbox), to), filepath.Base(src), f, st.Size(), "")
 }

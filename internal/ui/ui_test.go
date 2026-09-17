@@ -165,7 +165,7 @@ func TestMailFlow(t *testing.T) {
 		t.Fatal("not deleted")
 	}
 	// inbox listing with a received file
-	_, _ = mb.Receive("beta", "docs/r.md", strings.NewReader("# hi"), 4)
+	_, _ = mb.Receive("beta", "docs/r.md", strings.NewReader("# hi"), 4, "")
 	res, b = call(t, ts, "GET", "/api/mail?folder=inbox", nil, nil)
 	_ = json.Unmarshal(b, &items)
 	if len(items) != 1 || items[0].Name != "docs/r.md" || items[0].Kind != "text" {

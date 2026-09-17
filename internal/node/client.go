@@ -15,11 +15,20 @@ import (
 	"amail/internal/proto"
 )
 
+// IdleTimeout closes a connection with no progress for this long.
+const IdleTimeout = 90 * time.Second
+
 // Client makes outbound AMail calls to peers.
 type Client struct {
 	Self    string
 	Mat     *keys.Material
 	Timeout time.Duration // dial + handshake timeout
+	// Revoked, when set, refuses peers presenting a revoked certificate.
+	Revoked keys.RevokedFunc
+	// Gossip, when set, is attached to every request so peers learn our
+	// revocation list; Learn receives theirs from every reply.
+	Gossip func() []string
+	Learn  func(from string, serials []string)
 }
 
 // NewClient returns a client for the given node material.
@@ -37,15 +46,28 @@ func (c *Client) dial(ctx context.Context, peer config.Peer) (*proto.Conn, error
 	if err != nil {
 		return nil, err
 	}
-	tc := tls.Client(raw, c.Mat.ClientTLS(peer.ID))
+	tc := tls.Client(withIdle(raw, IdleTimeout), c.Mat.ClientTLS(peer.ID, c.Revoked))
 	hctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
 	if err := tc.HandshakeContext(hctx); err != nil {
 		_ = raw.Close()
 		return nil, fmt.Errorf("tls to %s (%s): %w", peer.ID, addr, err)
 	}
-	_ = tc.SetDeadline(time.Now().Add(30 * time.Minute))
 	return proto.NewConn(tc), nil
+}
+
+func (c *Client) header(typ string) *proto.Header {
+	h := &proto.Header{Type: typ, From: c.Self, Time: now()}
+	if c.Gossip != nil {
+		h.Revoked = c.Gossip()
+	}
+	return h
+}
+
+func (c *Client) learn(peer string, h *proto.Header) {
+	if c.Learn != nil && h != nil && len(h.Revoked) > 0 {
+		c.Learn(peer, h.Revoked)
+	}
 }
 
 // Status asks a peer who it is and what role it plays.
@@ -55,13 +77,14 @@ func (c *Client) Status(ctx context.Context, peer config.Peer) (*proto.Status, e
 		return nil, err
 	}
 	defer conn.Close()
-	if err := conn.Send(&proto.Header{Type: proto.TypeStatus, From: c.Self, Time: now()}, nil, 0); err != nil {
+	if err := conn.Send(c.header(proto.TypeStatus), nil, 0); err != nil {
 		return nil, err
 	}
 	h, _, err := conn.Expect(proto.TypeOK)
 	if err != nil {
 		return nil, err
 	}
+	c.learn(peer.ID, h)
 	if h.Status == nil {
 		return nil, errors.New("status reply without status")
 	}
@@ -75,19 +98,21 @@ func (c *Client) Peers(ctx context.Context, peer config.Peer) ([]proto.PeerInfo,
 		return nil, err
 	}
 	defer conn.Close()
-	if err := conn.Send(&proto.Header{Type: proto.TypePeers, From: c.Self, Time: now()}, nil, 0); err != nil {
+	if err := conn.Send(c.header(proto.TypePeers), nil, 0); err != nil {
 		return nil, err
 	}
 	h, _, err := conn.Expect(proto.TypeOK)
 	if err != nil {
 		return nil, err
 	}
+	c.learn(peer.ID, h)
 	return h.Peers, nil
 }
 
 // Deliver sends the file at path to peer. h.To names the final destination
 // (empty or the peer itself for direct delivery), h.Origin the original
-// sender, h.Name the relative file name, h.Hops the relays so far.
+// sender, h.Name the relative file name, h.Hops the relays so far, and
+// h.SHA256 / h.Sig / h.OriginCert the origin's proof.
 // Two phases: the header is announced first so the peer can refuse before
 // any bytes are sent, then the body follows.
 func (c *Client) Deliver(ctx context.Context, peer config.Peer, h proto.Header, path string) error {
@@ -107,6 +132,9 @@ func (c *Client) Deliver(ctx context.Context, peer config.Peer, h proto.Header, 
 	if h.Origin == "" {
 		h.Origin = c.Self
 	}
+	if c.Gossip != nil {
+		h.Revoked = c.Gossip()
+	}
 	conn, err := c.dial(ctx, peer)
 	if err != nil {
 		return err
@@ -115,8 +143,10 @@ func (c *Client) Deliver(ctx context.Context, peer config.Peer, h proto.Header, 
 	if err := conn.Send(&h, nil, 0); err != nil {
 		return err
 	}
-	if _, _, err := conn.Expect(proto.TypeOK); err != nil {
+	if rh, _, err := conn.Expect(proto.TypeOK); err != nil {
 		return err
+	} else {
+		c.learn(peer.ID, rh)
 	}
 	if err := conn.Send(&proto.Header{Type: proto.TypeBody, ID: h.ID, Size: h.Size}, f, h.Size); err != nil {
 		// The peer may have refused mid-stream; prefer its message.
@@ -131,14 +161,15 @@ func (c *Client) Deliver(ctx context.Context, peer config.Peer, h proto.Header, 
 
 // Pull fetches every file peer holds for us. fn must consume body fully and
 // store it; an item is acknowledged (and deleted on the peer) only when fn
-// returns nil. Returns how many items were received.
+// returns nil. A fn error of kind reject (permanent) is reported to the
+// peer so it can drop the item. Returns how many items were received.
 func (c *Client) Pull(ctx context.Context, peer config.Peer, fn func(h *proto.Header, body io.Reader) error) (int, error) {
 	conn, err := c.dial(ctx, peer)
 	if err != nil {
 		return 0, err
 	}
 	defer conn.Close()
-	if err := conn.Send(&proto.Header{Type: proto.TypePull, From: c.Self, Time: now()}, nil, 0); err != nil {
+	if err := conn.Send(c.header(proto.TypePull), nil, 0); err != nil {
 		return 0, err
 	}
 	count := 0
@@ -147,6 +178,7 @@ func (c *Client) Pull(ctx context.Context, peer config.Peer, fn func(h *proto.He
 		if err != nil {
 			return count, err
 		}
+		c.learn(peer.ID, h)
 		switch h.Type {
 		case proto.TypeEnd:
 			return count, nil
@@ -157,7 +189,14 @@ func (c *Client) Pull(ctx context.Context, peer config.Peer, fn func(h *proto.He
 				return count, fmt.Errorf("item %s: body length %d does not match size %d", h.Name, body.Len, h.Size)
 			}
 			if err := fn(h, body); err != nil {
-				_ = conn.Error(proto.CodeBusy, err.Error())
+				code := proto.CodeBusy
+				if proto.IsReject(err) {
+					code = proto.CodeReject
+				}
+				_ = conn.Send(&proto.Header{Type: proto.TypeError, ID: h.ID, Code: code, Msg: err.Error()}, nil, 0)
+				if code == proto.CodeReject {
+					continue // peer drops it; carry on with the next item
+				}
 				return count, err
 			}
 			if err := conn.Send(&proto.Header{Type: proto.TypeAck, ID: h.ID}, nil, 0); err != nil {

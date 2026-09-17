@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -67,6 +68,44 @@ type Node struct {
 	quiet    sync.Map // path -> time.Time of last "pending" log
 
 	histMu sync.Mutex
+	revMu  sync.Mutex // guards cfg.RevokedSerials
+}
+
+// --- revocation -----------------------------------------------------------
+
+func (n *Node) isRevoked(serial string) bool {
+	n.revMu.Lock()
+	defer n.revMu.Unlock()
+	return n.cfg.IsRevoked(serial)
+}
+
+func (n *Node) revokedList() []string {
+	n.revMu.Lock()
+	defer n.revMu.Unlock()
+	return append([]string(nil), n.cfg.RevokedSerials...)
+}
+
+// learnRevoked merges serials a whitelisted peer told us about and persists
+// them. Revocation only ever removes trust, so accepting it from any member
+// is safe; a member that lies can only deny service, which it could do by
+// dropping mail anyway.
+func (n *Node) learnRevoked(from string, serials []string) {
+	if len(serials) == 0 || len(serials) > 10000 {
+		return
+	}
+	n.revMu.Lock()
+	added := n.cfg.AddRevoked(serials...)
+	var err error
+	if added > 0 {
+		err = n.cfg.Save()
+	}
+	n.revMu.Unlock()
+	if added > 0 {
+		n.log.Printf("revocation: learned %d new revoked certificate serial(s) from %s", added, from)
+		if err != nil {
+			n.log.Printf("revocation: could not persist config: %v", err)
+		}
+	}
 }
 
 // New builds a node from options.
@@ -91,7 +130,7 @@ func New(o Options) (*Node, error) {
 	if o.Version == "" {
 		o.Version = "dev"
 	}
-	return &Node{
+	n := &Node{
 		cfg:     o.Config,
 		mat:     o.Material,
 		mb:      mb,
@@ -101,7 +140,74 @@ func New(o Options) (*Node, error) {
 		started: time.Now(),
 		role:    RoleSearching,
 		lim:     newLimiter(o.Config.MaxConnections, o.Config.MaxPerIPPerMin),
-	}, nil
+	}
+	n.cli.Revoked = n.isRevoked
+	n.cli.Gossip = n.revokedList
+	n.cli.Learn = n.learnRevoked
+	return n, nil
+}
+
+// verifyIncoming checks the origin proof on a deliver or pull item. It
+// returns a rejection reason, or "" when the file may be stored.
+//
+//   - Every file must carry its SHA-256; the content is checked against it
+//     while it is written, so nothing altered in transit becomes visible.
+//   - A file whose origin is the connecting peer is already authenticated by
+//     TLS; a signature, if present, is verified anyway.
+//   - A file whose origin is someone else (relayed) must carry the origin's
+//     signature and certificate: the certificate must chain to the network
+//     CA, name the origin and not be revoked; the signature must cover the
+//     destination, name, size and hash.
+func (n *Node) verifyIncoming(peer, origin, to string, peerCert *x509.Certificate, h *proto.Header) string {
+	if h.SHA256 == "" || len(h.SHA256) != 64 {
+		return "file has no SHA-256 (the sending node needs AMail 0.3 or newer)"
+	}
+	data := keys.Canonical(origin, to, h.Name, h.Size, h.SHA256)
+	if origin == peer {
+		if h.Sig == "" {
+			return ""
+		}
+		cert := peerCert
+		if h.OriginCert != "" {
+			c, err := n.mat.VerifyOriginCert(h.OriginCert, origin, n.isRevoked)
+			if err != nil {
+				return err.Error()
+			}
+			cert = c
+		}
+		if cert == nil {
+			return "no certificate to verify the signature with"
+		}
+		if err := keys.VerifySig(cert, data, h.Sig); err != nil {
+			return "origin signature: " + err.Error()
+		}
+		return ""
+	}
+	if h.Sig == "" || h.OriginCert == "" {
+		return fmt.Sprintf("relayed file claims origin %q but carries no origin signature", origin)
+	}
+	cert, err := n.mat.VerifyOriginCert(h.OriginCert, origin, n.isRevoked)
+	if err != nil {
+		return err.Error()
+	}
+	if err := keys.VerifySig(cert, data, h.Sig); err != nil {
+		return "origin signature: " + err.Error()
+	}
+	return ""
+}
+
+// sign fills the origin proof for a file this node sends from its outbox.
+func (n *Node) sign(it *mailbox.Item) error {
+	sum, err := mailbox.FileSHA256(it.Path)
+	if err != nil {
+		return err
+	}
+	sig, err := n.mat.Sign(keys.Canonical(n.cfg.NodeID, it.To, it.Name, it.Size, sum))
+	if err != nil {
+		return err
+	}
+	it.SHA256, it.Sig, it.OriginCert = sum, sig, n.mat.CertPEM()
+	return nil
 }
 
 // Mailbox exposes the node's mailbox.
@@ -250,8 +356,7 @@ func (n *Node) handle(ctx context.Context, raw net.Conn) {
 		n.log.Printf("refused %s: %s", remote, why)
 		return
 	}
-	_ = raw.SetDeadline(time.Now().Add(30 * time.Minute))
-	tc := tls.Server(raw, n.mat.ServerTLS())
+	tc := tls.Server(withIdle(raw, IdleTimeout), n.mat.ServerTLS(n.isRevoked))
 	hctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	err := tc.HandshakeContext(hctx)
 	cancel()
@@ -264,7 +369,12 @@ func (n *Node) handle(ctx context.Context, raw net.Conn) {
 		n.quietf("tls:"+ip, "refused %s: tls: %v (further failures from this address are logged at most every 5 min)", remote, err)
 		return
 	}
-	peer := keys.PeerID(tc.ConnectionState())
+	cs := tc.ConnectionState()
+	peer := keys.PeerID(cs)
+	var peerCert *x509.Certificate
+	if len(cs.PeerCertificates) > 0 {
+		peerCert = cs.PeerCertificates[0]
+	}
 	conn := proto.NewConn(tc)
 	if blocked, why := n.cfg.IsBlocked(peer, remote); blocked {
 		n.log.Printf("refused %s (%s): %s", peer, remote, why)
@@ -276,18 +386,25 @@ func (n *Node) handle(ctx context.Context, raw net.Conn) {
 		_ = conn.Error(proto.CodeReject, fmt.Sprintf("%s is not on %s's whitelist", peer, n.cfg.NodeID))
 		return
 	}
+	if !n.lim.request(peer, n.cfg.MaxPeerReqPerMin) {
+		n.quietf("rate:"+peer, "throttling %s: more than %d requests per minute", peer, n.cfg.MaxPeerReqPerMin)
+		_ = conn.Error(proto.CodeBusy, "rate limit: try again in a minute")
+		return
+	}
 	h, _, err := conn.Recv()
 	if err != nil {
 		n.log.Printf("%s (%s): bad request: %v", peer, remote, err)
 		return
 	}
+	n.learnRevoked(peer, h.Revoked)
+	rev := n.revokedList()
 	switch h.Type {
 	case proto.TypeStatus:
-		_ = conn.Send(&proto.Header{Type: proto.TypeOK, From: n.cfg.NodeID, Status: n.Status()}, nil, 0)
+		_ = conn.Send(&proto.Header{Type: proto.TypeOK, From: n.cfg.NodeID, Status: n.Status(), Revoked: rev}, nil, 0)
 	case proto.TypePeers:
-		_ = conn.Send(&proto.Header{Type: proto.TypeOK, From: n.cfg.NodeID, Peers: n.peerInfos()}, nil, 0)
+		_ = conn.Send(&proto.Header{Type: proto.TypeOK, From: n.cfg.NodeID, Peers: n.peerInfos(), Revoked: rev}, nil, 0)
 	case proto.TypeDeliver:
-		n.handleDeliver(conn, peer, remote, h)
+		n.handleDeliver(conn, peer, remote, peerCert, h)
 	case proto.TypePull:
 		n.handlePull(conn, peer)
 	default:
@@ -340,7 +457,7 @@ func (n *Node) Status() *proto.Status {
 	}
 }
 
-func (n *Node) handleDeliver(conn *proto.Conn, peer, remote string, h *proto.Header) {
+func (n *Node) handleDeliver(conn *proto.Conn, peer, remote string, peerCert *x509.Certificate, h *proto.Header) {
 	self := n.cfg.NodeID
 	origin := h.Origin
 	if origin == "" {
@@ -386,7 +503,13 @@ func (n *Node) handleDeliver(conn *proto.Conn, peer, remote string, h *proto.Hea
 			return
 		}
 	}
-	if err := conn.Send(&proto.Header{Type: proto.TypeOK, From: self, Msg: "send body"}, nil, 0); err != nil {
+	if why := n.verifyIncoming(peer, origin, to, peerCert, h); why != "" {
+		n.log.Printf("REJECTED %s (%d bytes) claimed from %s via %s: %s", name, h.Size, origin, peer, why)
+		n.history("rejected", h.ID, origin, to, peer, name, h.Size, why)
+		_ = conn.Error(proto.CodeReject, why)
+		return
+	}
+	if err := conn.Send(&proto.Header{Type: proto.TypeOK, From: self, Msg: "send body", Revoked: n.revokedList()}, nil, 0); err != nil {
 		return
 	}
 	bh, body, err := conn.Recv()
@@ -403,8 +526,14 @@ func (n *Node) handleDeliver(conn *proto.Conn, peer, remote string, h *proto.Hea
 		id = newID()
 	}
 	if to == self {
-		path, err := n.mb.Receive(origin, name, body, h.Size)
+		path, err := n.mb.Receive(origin, name, body, h.Size, h.SHA256)
 		if err != nil {
+			if errors.Is(err, mailbox.ErrHashMismatch) {
+				n.log.Printf("REJECTED %s from %s via %s: %v", name, origin, peer, err)
+				n.history("rejected", id, origin, self, peer, name, h.Size, err.Error())
+				_ = conn.Error(proto.CodeReject, err.Error())
+				return
+			}
 			n.log.Printf("%s: storing %s from %s failed: %v", self, name, origin, err)
 			_ = conn.Error(proto.CodeBusy, "could not store file: "+err.Error())
 			return
@@ -418,8 +547,13 @@ func (n *Node) handleDeliver(conn *proto.Conn, peer, remote string, h *proto.Hea
 		_ = conn.Send(&proto.Header{Type: proto.TypeOK, From: self, ID: id}, nil, 0)
 		return
 	}
-	path, err := n.mb.Hold(to, origin, name, body, h.Size, mailbox.Meta{ID: id, Hops: h.Hops + 1, ReceivedFrom: peer})
+	path, err := n.mb.Hold(to, origin, name, body, h.Size, mailbox.Meta{ID: id, Hops: h.Hops + 1, ReceivedFrom: peer, SHA256: h.SHA256, Sig: h.Sig, OriginCert: h.OriginCert})
 	if err != nil {
+		if errors.Is(err, mailbox.ErrHashMismatch) {
+			n.log.Printf("REJECTED %s for %s from %s via %s: %v", name, to, origin, peer, err)
+			_ = conn.Error(proto.CodeReject, err.Error())
+			return
+		}
 		_ = conn.Error(proto.CodeBusy, "could not hold file: "+err.Error())
 		return
 	}
@@ -439,7 +573,7 @@ func (n *Node) handlePull(conn *proto.Conn, peer string) {
 			return
 		}
 	}
-	_ = conn.Send(&proto.Header{Type: proto.TypeEnd, From: n.cfg.NodeID}, nil, 0)
+	_ = conn.Send(&proto.Header{Type: proto.TypeEnd, From: n.cfg.NodeID, Revoked: n.revokedList()}, nil, 0)
 }
 
 func (n *Node) pushItem(conn *proto.Conn, it mailbox.Item) bool {
@@ -456,15 +590,28 @@ func (n *Node) pushItem(conn *proto.Conn, it mailbox.Item) bool {
 	if id == "" {
 		id = newID()
 	}
-	err = conn.Send(&proto.Header{Type: proto.TypeItem, From: n.cfg.NodeID, To: it.To, Origin: it.Origin, ID: id, Name: it.Name, Size: st.Size(), Hops: it.Hops, Time: now()}, f, st.Size())
+	err = conn.Send(&proto.Header{Type: proto.TypeItem, From: n.cfg.NodeID, To: it.To, Origin: it.Origin, ID: id, Name: it.Name, Size: st.Size(), Hops: it.Hops, Time: now(), SHA256: it.SHA256, Sig: it.Sig, OriginCert: it.OriginCert}, f, st.Size())
 	_ = f.Close()
 	if err != nil {
 		n.log.Printf("pull by %s: sending %s failed: %v", it.To, it.Name, err)
 		return false
 	}
 	ah, _, err := conn.Recv()
-	if err != nil || ah.Type != proto.TypeAck {
+	if err != nil {
 		n.log.Printf("pull by %s: no ack for %s (kept)", it.To, it.Name)
+		return false
+	}
+	switch {
+	case ah.Type == proto.TypeAck:
+	case ah.Type == proto.TypeError && ah.Code == proto.CodeReject:
+		// The receiver refused it for good (bad signature, hash mismatch):
+		// keep it out of the queue but do not lose it silently.
+		dest, _ := n.mb.Fail(it, "refused by "+it.To+": "+ah.Msg)
+		n.log.Printf("pull by %s: %s REJECTED (%s) -> %s", it.To, it.Name, ah.Msg, dest)
+		n.history("rejected", id, it.Origin, it.To, "pull", it.Name, st.Size(), ah.Msg)
+		return true
+	default:
+		n.log.Printf("pull by %s: %s not accepted (%s %s), kept", it.To, it.Name, ah.Type, ah.Msg)
 		return false
 	}
 	_ = n.mb.Remove(it)
@@ -583,12 +730,16 @@ func (n *Node) deliverOutbox(ctx context.Context) {
 				if err != nil {
 					return
 				}
-				path, err := n.mb.Receive(self, it.Name, f, it.Size)
+				path, err := n.mb.Receive(self, it.Name, f, it.Size, "")
 				_ = f.Close()
 				if err == nil {
 					_, _ = n.mb.MarkSent(it)
 					n.log.Printf("delivered %s to myself -> %s", it.Name, path)
 				}
+				return
+			}
+			if err := n.sign(&it); err != nil {
+				n.quietf("sign:"+it.Path, "cannot sign %s: %v (will retry)", it.Name, err)
 				return
 			}
 			out, err := n.route(ctx, it)
@@ -609,11 +760,16 @@ func (n *Node) deliverHeld(ctx context.Context) {
 		func() {
 			defer n.release(it.Path)
 			if it.To == self {
+				if why := n.verifyIncoming(self, it.Origin, self, nil, &proto.Header{Name: it.Name, Size: it.Size, SHA256: it.SHA256, Sig: it.Sig, OriginCert: it.OriginCert}); why != "" && it.Origin != self {
+					dest, _ := n.mb.Fail(it, why)
+					n.log.Printf("REJECTED held %s from %s: %s -> %s", it.Name, it.Origin, why, dest)
+					return
+				}
 				f, err := os.Open(it.Path)
 				if err != nil {
 					return
 				}
-				path, err := n.mb.Receive(it.Origin, it.Name, f, it.Size)
+				path, err := n.mb.Receive(it.Origin, it.Name, f, it.Size, it.SHA256)
 				_ = f.Close()
 				if err == nil {
 					_ = n.mb.Remove(it)
@@ -655,7 +811,7 @@ func (n *Node) finish(it mailbox.Item, out outcome, err error) {
 		n.history("relayed", it.ID, it.Origin, it.To, leader, it.Name, it.Size, "")
 	case out == held:
 		if !it.Held {
-			if _, err := n.mb.HoldFile(it, mailbox.Meta{ID: it.ID, Hops: 0, ReceivedFrom: n.cfg.NodeID}); err != nil {
+			if _, err := n.mb.HoldFile(it, mailbox.Meta{ID: it.ID, Hops: 0, ReceivedFrom: n.cfg.NodeID, SHA256: it.SHA256, Sig: it.Sig, OriginCert: it.OriginCert}); err != nil {
 				n.log.Printf("holding %s for %s failed: %v", it.Name, it.To, err)
 				return
 			}
@@ -688,7 +844,7 @@ func (n *Node) route(ctx context.Context, it mailbox.Item) (outcome, error) {
 	if blocked, why := n.cfg.IsBlocked(it.To, peer.Host); blocked {
 		return pending, fatal{errors.New(why)}
 	}
-	hdr := proto.Header{ID: it.ID, To: it.To, Origin: it.Origin, Name: it.Name, Hops: it.Hops}
+	hdr := proto.Header{ID: it.ID, To: it.To, Origin: it.Origin, Name: it.Name, Hops: it.Hops, SHA256: it.SHA256, Sig: it.Sig, OriginCert: it.OriginCert}
 	if peer.Host != "" {
 		err := n.cli.Deliver(ctx, peer, hdr, it.Path)
 		if err == nil {
@@ -733,7 +889,16 @@ func (n *Node) pull(ctx context.Context) {
 		if why := n.roomFor(h.Size); why != "" {
 			return errors.New(why)
 		}
-		path, err := n.mb.Receive(h.Origin, h.Name, body, h.Size)
+		if why := n.verifyIncoming(leader, h.Origin, self, nil, h); why != "" {
+			n.log.Printf("REJECTED pulled %s claimed from %s via %s: %s", h.Name, h.Origin, leader, why)
+			n.history("rejected", h.ID, h.Origin, self, leader, h.Name, h.Size, why)
+			return &proto.RemoteError{Code: proto.CodeReject, Msg: why}
+		}
+		path, err := n.mb.Receive(h.Origin, h.Name, body, h.Size, h.SHA256)
+		if errors.Is(err, mailbox.ErrHashMismatch) {
+			n.log.Printf("REJECTED pulled %s from %s: %v", h.Name, h.Origin, err)
+			return &proto.RemoteError{Code: proto.CodeReject, Msg: err.Error()}
+		}
 		if err != nil {
 			return err
 		}

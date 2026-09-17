@@ -20,4 +20,6 @@ Build windows amd64 .exe
 Build linux   amd64 ""
 Build linux   arm64 ""
 Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED -ErrorAction SilentlyContinue
+Get-ChildItem "dist\amail-$Version-*" | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name } | Set-Content -Encoding ascii dist\SHA256SUMS
+Write-Host "  dist\SHA256SUMS"
 Write-Host "done"

@@ -101,6 +101,22 @@ func (l *limiter) admit(ip string) (release func(), reason string, logIt bool) {
 	}, "", false
 }
 
+// request counts one authenticated request from a peer id and reports
+// whether it is over the per-minute allowance.
+func (l *limiter) request(peer string, max int) bool {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	key := "peer:" + peer
+	w := l.strikes[key]
+	if w == nil || now.Sub(w.start) >= time.Minute {
+		w = &ipWindow{start: now}
+		l.strikes[key] = w
+	}
+	w.count++
+	return w.count <= max
+}
+
 // strike records a failed TLS handshake from ip.
 func (l *limiter) strike(ip string) {
 	now := time.Now()
