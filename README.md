@@ -28,6 +28,8 @@ servers. Single static binary, no dependencies.
   (encrypted in transit), not end-to-end secrecy. Every node on the network
   is trusted.
 
+New member? Follow [docs/JOINING.md](docs/JOINING.md), it is written for you.
+
 ## Quick start (a node)
 
 1. Download `amail.exe` (Windows) or `amail` (Linux) from the releases page
