@@ -30,6 +30,48 @@ servers. Single static binary, no dependencies.
 
 New member? Follow [docs/JOINING.md](docs/JOINING.md), it is written for you.
 
+## Installation and prerequisites
+
+**What you need**
+
+| | Windows | Linux |
+|---|---|---|
+| OS | Windows 10 / 11, 64-bit | x86-64 or arm64 with systemd |
+| Network | outbound TCP 4444 to the server node (all home connections); inbound 4444 **only** if this machine will host for others | same |
+| To run a release | nothing else: one static binary, no runtime | same |
+| To build | Go 1.24 or newer, git | same |
+| Optional | PowerShell for the scheduled-task installer | `sudo` for the service installer |
+
+**Install a release**
+
+1. Download `amail-<version>-<os>-<arch>` and `SHA256SUMS` from the Releases
+   page and verify: PowerShell `(Get-FileHash <file> -Algorithm SHA256).Hash`
+   against the list, or `sha256sum -c SHA256SUMS --ignore-missing`.
+2. Windows: copy it to `%LOCALAPPDATA%\Programs\AMail\amail.exe` and add
+   that folder to your user PATH (the joining guide has the one-liner).
+   Linux: `sudo install -m 755 amail-<version>-linux-amd64 /usr/local/bin/amail`.
+3. `amail version` in a new terminal.
+
+**Build from source**
+
+```bash
+git clone <repository url> && cd amail
+go build -o amail ./cmd/amail          # this platform
+sh scripts/build.sh 0.3.0              # or scripts\build.ps1: all platforms into dist/ + SHA256SUMS
+go test ./...                          # ~90 s, includes the loopback network suite
+```
+
+**Where things go**
+
+| | Windows | Linux |
+|---|---|---|
+| Node home (config, key, log) | `%APPDATA%\AMail` | `~/.amail` |
+| Mailbox | `%USERPROFILE%\AMail` | `~/AMail` |
+| Override | `--home DIR` before any command, or `AMAIL_HOME` | same |
+
+Then follow the quick start below, or the joining guide if someone else runs
+the network.
+
 ## Quick start (a node)
 
 1. Download `amail.exe` (Windows) or `amail` (Linux) from the releases page

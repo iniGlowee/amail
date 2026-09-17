@@ -136,6 +136,14 @@ func main() {
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "amail: %v\n", err)
+		if cmd == "run" || cmd == "ui" {
+			// Unattended starts (services, scheduled tasks) have no console:
+			// leave the reason where the operator will look.
+			if f, ferr := os.OpenFile(filepath.Join(home, "amail.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); ferr == nil {
+				fmt.Fprintf(f, "%s amail %s failed to start: %v (home %s)\n", time.Now().Format("2006/01/02 15:04:05"), cmd, err, home)
+				_ = f.Close()
+			}
+		}
 		os.Exit(1)
 	}
 }

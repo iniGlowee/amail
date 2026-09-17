@@ -1,132 +1,212 @@
 # Joining an AMail network (member guide)
 
 You have been invited to a private AMail network. This page takes you from
-nothing to sending your first file. You need: a Windows PC or a Linux
-machine, the network operator's contact (the person who invited you), and
-about ten minutes.
+nothing to a node that is online, sending and receiving, and (optionally)
+starting by itself. You need a Windows PC or a Linux machine, the network
+operator's contact (the person who invited you), and about fifteen minutes.
 
 Nothing on your machine is exposed to the internet by default: your node
-dials out to the network's server and pulls its mail. No port forwarding,
-no firewall changes.
+dials out to the network's server and pulls its own mail. No port
+forwarding, no router changes, no firewall rules.
+
+## Prerequisites
+
+| | Windows | Linux |
+|---|---|---|
+| OS | Windows 10 or 11, 64-bit | any x86-64 or arm64 distribution with systemd (Ubuntu, Debian, Amazon Linux, Fedora…) |
+| Network | outbound TCP to the server on port 4444 (home connections allow this) | same |
+| Disk | a few MB for the program plus whatever you send and receive | same |
+| Tools | PowerShell (built in) | a shell, `sha256sum`, `sudo` for the service step |
+| To build from source (optional) | Go 1.24+ | Go 1.24+ |
 
 ## 1. Get the program
 
-**Option A, download a release** (no build tools needed)
+**Option A, download a release** (recommended, no build tools)
 
-1. Open the repository's Releases page and download the file for your
-   machine: `amail-<version>-windows-amd64.exe`, `amail-<version>-linux-amd64`
+1. On the repository's *Releases* page download the file for your machine
+   and the checksum list:
+   `amail-<version>-windows-amd64.exe`, or `amail-<version>-linux-amd64`,
    or `amail-<version>-linux-arm64`, plus `SHA256SUMS`.
-2. Check the download matches the checksum. Windows PowerShell:
+2. Verify the download. The two hashes must match exactly; if they do not,
+   do not run the file and tell the operator.
 
    ```powershell
+   # Windows PowerShell, in your Downloads folder
    (Get-FileHash .\amail-<version>-windows-amd64.exe -Algorithm SHA256).Hash.ToLower()
-   Select-String amail-<version>-windows-amd64.exe .\SHA256SUMS
+   Select-String "windows-amd64" .\SHA256SUMS
    ```
 
-   Linux: `sha256sum -c SHA256SUMS --ignore-missing`.
-   The two hashes must be identical. If not, do not run it; tell the operator.
-3. Rename it to `amail.exe` (Windows) or `amail` (Linux, then `chmod +x amail`)
-   and put it somewhere on your PATH, or just run it from a folder you
-   remember.
+   ```bash
+   # Linux
+   sha256sum -c SHA256SUMS --ignore-missing
+   ```
 
-**Option B, build it yourself** (Go 1.24+ installed)
+3. Put it somewhere sensible and give it a plain name:
+
+   ```powershell
+   # Windows: install for your user and add it to PATH (new terminals see it)
+   New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Programs\AMail" | Out-Null
+   Copy-Item .\amail-<version>-windows-amd64.exe "$env:LOCALAPPDATA\Programs\AMail\amail.exe"
+   [Environment]::SetEnvironmentVariable('Path', ([Environment]::GetEnvironmentVariable('Path','User').TrimEnd(';') + ";$env:LOCALAPPDATA\Programs\AMail"), 'User')
+   ```
+
+   ```bash
+   # Linux
+   chmod +x amail-<version>-linux-amd64 && sudo install -m 755 amail-<version>-linux-amd64 /usr/local/bin/amail
+   ```
+
+   Open a **new** terminal afterwards and check: `amail version`.
+
+**Option B, build it yourself**
 
 ```bash
-git clone <repository url>
-cd amail
-go test ./...          # optional, ~90 s
-go build -o amail ./cmd/amail
+git clone <repository url> && cd amail
+go build -o amail ./cmd/amail        # add .exe on Windows
+go test ./...                        # optional, about 90 s
 ```
 
 ## 2. Create your node
 
-Pick a short id for your machine: lowercase letters, digits and hyphens,
-for example `james-pc`. Then:
+Pick a short id for this machine: lowercase letters, digits and hyphens,
+for example `james-pc` or `james-laptop`. Then:
 
 ```bash
 amail init --id james-pc --listen off
 ```
 
-`--listen off` means your machine opens no port at all; it will send
-directly to reachable nodes and collect its own mail from the server. Leave
-it off unless the operator asks you to host.
+`--listen off` means your machine opens no port at all: it sends directly to
+nodes it can reach and collects its own mail from the server. Leave it that
+way unless the operator asks you to host for others.
 
-This creates a config folder (`%APPDATA%\AMail` on Windows, `~/.amail` on
-Linux) and your mailbox folder `AMail` in your home directory with
-`inbox`, `outbox`, `sent`, `forward`, `failed` inside.
+This creates your **node home** (`%APPDATA%\AMail` on Windows, `~/.amail` on
+Linux; it holds `config.json`, your key and the log) and your **mailbox**
+folder `AMail` in your home directory with `inbox`, `outbox`, `sent`,
+`forward` and `failed` inside. `amail config` shows both paths any time.
 
 ## 3. Ask for your key
 
-`amail init` prints a short request. Send it to the operator. You will get
-back:
+`amail init` prints a short request. Send it to the operator. You get back:
 
-* a file `james-pc.amailkey`, usually sealed with a passphrase, and
-* the passphrase, sent separately (by phone, text, in person).
+* a file `james-pc.amailkey`, sealed with a passphrase, and
+* the passphrase, sent a different way (phone call, text message, in person).
 
 Install it:
 
-```bash
+```powershell
 # Windows PowerShell
 $env:AMAIL_KEY_PASS = 'the passphrase you were given'
 amail join .\james-pc.amailkey
-
-# Linux / macOS shell
-AMAIL_KEY_PASS='the passphrase you were given' amail join james-pc.amailkey
+Remove-Item .\james-pc.amailkey
 ```
 
-Then **delete the `.amailkey` file**. It contains your node's private key
-and is no longer needed. Never send it to anyone, including back to the
-operator.
+```bash
+# Linux
+AMAIL_KEY_PASS='the passphrase you were given' amail join james-pc.amailkey && rm james-pc.amailkey
+```
+
+The file held your node's private key; once installed it is not needed and
+should not exist anywhere else. Never send it back or forward it.
 
 ## 4. Tell your node who to talk to
 
-The operator gives you the list of nodes. Add them in the order given: the
-first entry that answers becomes the server your node uses.
+The operator gives you the list of nodes. Add them **in the order given**;
+the first entry that answers becomes the server your node uses.
 
 ```bash
-amail whitelist add <server-id> <server host or IP>
-amail whitelist add <other-id>
+amail whitelist add ausa-web <host or IP the operator gives you>
+amail whitelist add austin-pc
+amail whitelist list
 ```
 
-Only nodes on your whitelist can send you anything, and only they can
-receive from you. The operator adds *your* id to the other nodes at the
-same time.
+Only whitelisted nodes can send you anything or receive from you. The
+operator adds *your* id on the other nodes at the same time.
 
-## 5. Run it
+## 5. Get the node online
+
+Run it in a terminal first, so you can see what it does:
 
 ```bash
 amail run
 ```
 
-You should see `role: client of <server-id>` within a few seconds. Open
-http://127.0.0.1:4445 in a browser for the web view (only your own machine
-can reach it).
+Within a few seconds you should see:
 
-To keep it running after you close the window:
+```
+listener off: client-only node ...
+role: client of ausa-web
+```
 
-* **Windows**: from the repository folder,
-  `powershell -ExecutionPolicy Bypass -File scripts\windows\install-startup.ps1 -Binary <path to amail.exe>`
-  registers a task that starts it when you log in.
-* **Linux**: `sudo scripts/linux/install.sh <your user>` installs a systemd
-  service.
+That is "online". If you see `role: searching`, no whitelisted server
+answered: check the host you typed in step 4, and that you have internet.
+`Ctrl+C` stops it.
 
-## 6. Send and receive
+Open http://127.0.0.1:4445 in a browser while it runs for the web view
+(Overview, Inbox, Compose, Settings). Only your own machine can reach it.
 
-* Send: drop any file or folder into `AMail\outbox\<node-id>\`, or use
-  Compose in the web view. Watch it move to `sent\`.
-* Receive: look in `AMail\inbox\<sender-id>\`. Files appear within about
-  ten seconds of being sent.
-* Something wrong: `AMail\failed\` has the file and a `.error.txt` saying
-  why. `amail status` shows who is reachable.
+From a second terminal, `amail status` shows every node it can see with
+role, version and uptime.
 
-## 7. Good habits
+## 6. Send your first file
 
-* Your key identifies you. If your machine is lost or you suspect the key
+* Drop any file (or a whole folder) into `AMail\outbox\ausa-web\` (Windows)
+  or `~/AMail/outbox/ausa-web/` (Linux). Within about ten seconds it moves to
+  `sent\ausa-web\` and appears in the recipient's inbox.
+* Or open the web view, *Compose*, choose the recipient, type a note, drag
+  files in, *Send*.
+* Incoming files appear in `AMail\inbox\<sender-id>\`.
+* If something cannot be delivered it goes to `AMail\failed\` with a
+  `.error.txt` beside it saying why.
+
+## 7. Optional: start automatically
+
+Skip this if you are happy to run `amail run` by hand. Otherwise:
+
+**Windows: a scheduled task that runs while you are logged in**
+
+From the folder where you cloned or unpacked the repository (it needs the
+script under `scripts\windows`):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\windows\install-startup.ps1 -Binary "$env:LOCALAPPDATA\Programs\AMail\amail.exe"
+```
+
+What this registers, deliberately:
+
+* task name **AMail**, starts when *you* log on (not at boot, not for other
+  users), runs hidden in your session, ends when you log off;
+* never wakes the computer and does not require it to be plugged in, so it
+  suits a PC that is not always on;
+* if the node crashes it is restarted a minute later;
+* passes your node home explicitly, so it does not depend on environment
+  variables.
+
+Check it: `Get-ScheduledTask AMail` shows *Running*; `amail status` shows
+your node. Re-run the same command with a new `-Binary` to upgrade. Remove
+it with `scripts\windows\uninstall-startup.ps1`.
+
+**Linux: a systemd service**
+
+```bash
+sudo scripts/linux/install.sh $USER
+```
+
+installs the unit `amail@<user>.service` (restart on failure, resource
+limits, starts at boot). `journalctl -u amail@$USER -f` follows the log.
+If you would rather have a dedicated account, `sudo scripts/linux/install.sh amail`
+creates one and adds you to its group; see `docs/OPERATOR.md` section 6.
+
+## 8. Everyday use and good habits
+
+* `amail status` when in doubt; `amail config` for paths; the log lives in
+  your node home (`amail.log`).
+* Your key identifies you. If the machine is lost or you think the key
   leaked, tell the operator: they revoke it in one command and issue a new
-  one. Nothing else on the network needs changing.
-* Everything you send is encrypted in transit and signed by you. The
-  server node holds files for you until you collect them, and can read
-  what it holds; do not send anything through AMail that the server's owner
-  should not see.
-* Keep `amail` up to date. `amail status` shows every node's version; when
-  the operator announces a new version, all nodes upgrade together.
+  one. Nothing else on the network changes.
+* Everything you send is encrypted in transit and signed by you. The server
+  node keeps files for you until you collect them and can read what it
+  holds. Do not send anything through AMail that the server's owner should
+  not see.
+* Keep `amail` current: when the operator announces a version, everyone
+  upgrades together (0.3.0 nodes do not accept files from older ones).
+  Windows: re-run the install script with the new file. Linux: replace
+  `/usr/local/bin/amail` and `sudo systemctl restart amail@$USER`.
