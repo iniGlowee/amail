@@ -9,8 +9,8 @@
 /data/
 /home-*/
 *.amailkey
-ca/
-keys/
+/ca/
+/keys/
 *.key
 *.crt
 config.json
