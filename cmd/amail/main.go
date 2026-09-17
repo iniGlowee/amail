@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/iniGlowee/amail/internal/config"
+	"github.com/iniGlowee/amail/internal/gateway"
 	"github.com/iniGlowee/amail/internal/keys"
 	"github.com/iniGlowee/amail/internal/mailbox"
 	"github.com/iniGlowee/amail/internal/node"
@@ -50,6 +51,7 @@ Node commands
   run                                                run the node (foreground; use the service scripts to keep it running)
                                                      also serves the local web UI at ui_listen (default http://127.0.0.1:4445)
   ui [--addr 127.0.0.1:4445] [--no-open]             open the web UI without running a node (read, send, delete, settings)
+  gateway --config FILE [--once] [--init]            e-mail -> AMail: convert Maildir messages whose subject has "#amail <node>"
   status [id ...]                                    ask this node and every whitelisted peer who they are
   send <node-id> <file> [file ...]                   queue files in outbox/<node-id>/ for delivery
   peers [--merge]                                    list the server's whitelist, optionally adding unknown nodes to ours
@@ -109,6 +111,8 @@ func main() {
 		err = cmdRun(home)
 	case "ui":
 		err = cmdUI(home, rest)
+	case "gateway":
+		err = cmdGateway(home, rest)
 	case "status":
 		err = cmdStatus(home, rest)
 	case "send":
@@ -444,6 +448,54 @@ func cmdUI(home string, args []string) error {
 		ui.OpenBrowser(url)
 	}
 	return srv.ListenAndServe(ctx, *addr)
+}
+
+func cmdGateway(home string, args []string) error {
+	fs := flag.NewFlagSet("gateway", flag.ContinueOnError)
+	cfgPath := fs.String("config", "", "gateway config file (JSON)")
+	once := fs.Bool("once", false, "scan once and exit")
+	initCfg := fs.Bool("init", false, "write an example config to --config and exit")
+	if _, err := parseMixed(fs, args); err != nil {
+		return err
+	}
+	if *cfgPath == "" {
+		*cfgPath = filepath.Join(home, "gateway.json")
+	}
+	if *initCfg {
+		if _, err := os.Stat(*cfgPath); err == nil {
+			return fmt.Errorf("%s already exists", *cfgPath)
+		}
+		example := gateway.Default()
+		example.Maildir = "/home/you/Mail/example.com/info"
+		example.Outbox = filepath.Join(config.DefaultMailbox(), "outbox")
+		example.AllowedSenders = []string{"you@example.com", "@yourcompany.example"}
+		example.State = *cfgPath + ".state"
+		js, _ := json.MarshalIndent(example, "", "  ")
+		if err := os.MkdirAll(filepath.Dir(*cfgPath), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(*cfgPath, append(js, '\n'), 0o600); err != nil {
+			return err
+		}
+		fmt.Printf("Example gateway config written to %s. Edit maildir, outbox and allowed_senders, then: amail gateway --config %s\n", *cfgPath, *cfgPath)
+		return nil
+	}
+	cfg, err := gateway.Load(*cfgPath)
+	if err != nil {
+		return err
+	}
+	if *once {
+		cfg.PollSeconds = 0
+	}
+	logger := log.New(os.Stdout, "", log.LstdFlags)
+	g, err := gateway.New(cfg, logger)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	g.Run(ctx.Done())
+	return nil
 }
 
 // --- status ---------------------------------------------------------------

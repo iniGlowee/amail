@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0 (2026-09-17)
+
+* **E-mail gateway** (`amail gateway --config FILE [--once] [--init]`):
+  watches a Maildir and turns messages whose subject contains
+  `#amail <node-id>` into an outbox message folder (`message.txt`,
+  `headers.txt`, decoded attachments) for the local node to deliver.
+  Sender allow-list, SPF/DKIM pass required by default, optional subject
+  secret, SES spam/virus verdicts honoured, size cap, state file so mail is
+  never converted twice, mail itself never touched. Standard library MIME
+  parsing (multipart, quoted-printable, base64, encoded words). systemd unit
+  `scripts/linux/amail-gateway.service`. See `docs/GATEWAY.md`.
+
 ## 0.3.0 (2026-09-17)
 
 Module path is `github.com/iniGlowee/amail` (a dot-less module name made the

@@ -162,6 +162,16 @@ test suite checks a random 5 MB blob with SHA-256, direct and relayed).
   files get a clear "refuses files over N MB" in `failed/`, so raise the
   limit on both sides for very large transfers.
 
+## From e-mail into AMail
+
+If one of your nodes sits on a machine that receives mail (for example a
+server where Amazon SES drops messages into a Maildir), `amail gateway` turns
+e-mails with `#amail <node-id>` in the subject into AMail messages: the body
+becomes `message.txt`, attachments come along, and the node delivers the
+folder to `<node-id>`. Only allow-listed senders whose mail passes SPF or
+DKIM are accepted, and an optional secret word can be required in the
+subject. Details in [docs/GATEWAY.md](docs/GATEWAY.md).
+
 ## The mailbox folders
 
 Everything is a plain folder. Use Explorer, Finder, `cp`, a cron job, a PHP

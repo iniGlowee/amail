@@ -1,0 +1,22 @@
+[Unit]
+Description=AMail e-mail gateway (Maildir -> AMail outbox)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Run as the user who owns the Maildir; that user must be able to write the
+# node's outbox (on a shared box: a member of the node's group, outbox 2775).
+User=CHANGEME
+Group=CHANGEME
+UMask=0002
+ExecStart=/usr/local/bin/amail gateway --config /home/CHANGEME/.config/amail-gateway.json
+Restart=always
+RestartSec=10
+MemoryMax=128M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
