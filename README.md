@@ -288,6 +288,7 @@ docs/                DESIGN, PROTOCOL, OPERATOR, TESTING, CHANGELOG
 
 ## Documentation
 
+* [docs/HISTORY.md](docs/HISTORY.md): timeline, decisions and why, current state, open items.
 * [docs/DESIGN.md](docs/DESIGN.md): roles, election, routing, hops, folders.
 * [docs/PROTOCOL.md](docs/PROTOCOL.md): the wire protocol on port 4444.
 * [docs/SECURITY.md](docs/SECURITY.md): threat model, what is and is not protected, checklist.
