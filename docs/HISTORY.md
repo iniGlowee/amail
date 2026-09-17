@@ -93,28 +93,37 @@ Origin checks stop other web pages in the same browser from driving it.
 arrive together in one folder named after the subject, using the existing
 sub-folder support. No new wire concept was needed.
 
-## 4. Current state (2026-09-17)
+## 4. Current state (2026-09-17, end of day)
 
 * Two nodes live on network `armas`: the Ausa web server (Linux, server
-  role, dedicated user, systemd) and the operator's PC (Windows, client-only,
-  UI on loopback). Both on 0.3.0, signed delivery verified both ways.
-* Repository: local git, `main`, all work committed. Not yet pushed to
-  GitHub; the workflow will test, build, checksum and release on a `v*` tag.
-* Tests: unit + 3-node loopback suites, all green; fuzzer and govulncheck
-  clean.
-* Docs: README, DESIGN, PROTOCOL, SECURITY, OPERATOR, TESTING, CHANGELOG,
-  this file, CLAUDE.md for future sessions.
+  role, dedicated sudo-less user, systemd, port 4444 open to all sources
+  because mutual TLS is the lock) and the operator's PC (Windows,
+  client-only, logon-only scheduled task, UI on loopback). Both on 0.3.0,
+  signed delivery verified both ways.
+* The CA key is passphrase-sealed and backed up off the PC.
+* Published: https://github.com/iniGlowee/amail, release `v0.3.0` with
+  checksummed binaries built by CI and verified by download. Module path
+  `github.com/iniGlowee/amail`; `go install .../cmd/amail@v0.3.0` works.
+* A third member (`james-pc`) is pre-whitelisted; the joining guide and an
+  invitation email are ready; the key is issued when the request arrives.
+* Tests: unit + 3-node loopback suites, all green on Linux and Windows in
+  CI; fuzzer and govulncheck clean.
+* Docs: README, JOINING, DESIGN, PROTOCOL, SECURITY, OPERATOR, TESTING,
+  CHANGELOG, this file, CLAUDE.md for future sessions.
+
+Two publishing mistakes were caught by CI and fixed the same day: a
+dot-less module name, and a `.gitignore` rule for node key folders that had
+hidden the `internal/keys` package from every commit. Both are recorded in
+the changelog and in the operator's notes.
 
 ## 5. Open items
 
 | Item | Owner | Why it matters |
 |---|---|---|
-| Firewall / security group source narrowed to the PC's address | operator | strangers should not even cost a handshake |
-| `amail ca protect` with a passphrase | operator | CA key is in the clear on the operator's PC |
-| Push to GitHub, tag `v0.3.0` | operator | off-site copy, CI, downloadable checksummed binaries |
-| PC node as a scheduled task | operator | today it runs as a session process; `scripts/windows/install-startup.ps1` makes it persistent |
+| Issue `james-pc` a sealed key when his request arrives, then refresh the CA backup | operator | first outside member |
 | Re-issue the two original certificates (issued with the old 10-year default) | optional | shorter life is the new norm; revoke the old serials after |
 | README contact line for key requests | operator | intentionally blank until Austin chooses what to publish |
+| Code-sign the Windows binary | optional | removes the SmartScreen warning; the checksum covers integrity meanwhile |
 
 ## 6. Roadmap ideas (not started)
 
