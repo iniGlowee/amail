@@ -29,6 +29,7 @@ import (
 	"github.com/iniGlowee/amail/internal/keys"
 	"github.com/iniGlowee/amail/internal/mailbox"
 	"github.com/iniGlowee/amail/internal/node"
+	"github.com/iniGlowee/amail/internal/processor"
 	"github.com/iniGlowee/amail/internal/proto"
 	"github.com/iniGlowee/amail/internal/ui"
 )
@@ -51,7 +52,8 @@ Node commands
   run                                                run the node (foreground; use the service scripts to keep it running)
                                                      also serves the local web UI at ui_listen (default http://127.0.0.1:4445)
   ui [--addr 127.0.0.1:4445] [--no-open]             open the web UI without running a node (read, send, delete, settings)
-  gateway --config FILE [--once] [--init]            e-mail -> AMail: convert Maildir messages whose subject has "#amail <node>"
+  gateway --config FILE [--once] [--init]            e-mail <-> AMail (Maildir "#amail <node>" subjects in; "#email" notes out)
+  process --config FILE [--once] [--init]            run a command on notes whose first line is a handler tag (e.g. "#claude ...") and reply by AMail
   status [id ...]                                    ask this node and every whitelisted peer who they are
   send <node-id> <file> [file ...]                   queue files in outbox/<node-id>/ for delivery
   peers [--merge]                                    list the server's whitelist, optionally adding unknown nodes to ours
@@ -113,6 +115,8 @@ func main() {
 		err = cmdUI(home, rest)
 	case "gateway":
 		err = cmdGateway(home, rest)
+	case "process":
+		err = cmdProcess(home, rest)
 	case "status":
 		err = cmdStatus(home, rest)
 	case "send":
@@ -495,6 +499,62 @@ func cmdGateway(home string, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	g.Run(ctx.Done())
+	return nil
+}
+
+func cmdProcess(home string, args []string) error {
+	fs := flag.NewFlagSet("process", flag.ContinueOnError)
+	cfgPath := fs.String("config", "", "processor config file (JSON)")
+	once := fs.Bool("once", false, "scan once and exit")
+	initCfg := fs.Bool("init", false, "write an example config to --config and exit")
+	if _, err := parseMixed(fs, args); err != nil {
+		return err
+	}
+	if *cfgPath == "" {
+		*cfgPath = filepath.Join(home, "processor.json")
+	}
+	if *initCfg {
+		if _, err := os.Stat(*cfgPath); err == nil {
+			return fmt.Errorf("%s already exists", *cfgPath)
+		}
+		example := processor.Default()
+		example.Inbox = filepath.Join(config.DefaultMailbox(), "inbox")
+		example.Outbox = filepath.Join(config.DefaultMailbox(), "outbox")
+		example.AllowedOrigins = []string{"gateway-node"}
+		example.Handlers = []processor.Handler{{
+			Tag: "#claude", Command: []string{"claude-headless.cmd"}, ReplyTo: "gateway-node",
+			ReplyFirstLine: "#email Claude: {subject}", TimeoutSeconds: 300,
+		}}
+		example.State = *cfgPath + ".state"
+		js, _ := json.MarshalIndent(example, "", "  ")
+		if err := os.MkdirAll(filepath.Dir(*cfgPath), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(*cfgPath, append(js, '\n'), 0o600); err != nil {
+			return err
+		}
+		fmt.Printf("Example processor config written to %s. Edit it, then: amail process --config %s\n", *cfgPath, *cfgPath)
+		return nil
+	}
+	cfg, err := processor.Load(*cfgPath)
+	if err != nil {
+		return err
+	}
+	if *once {
+		cfg.PollSeconds = 0
+	}
+	logger := log.New(os.Stdout, "", log.LstdFlags)
+	if f, err := os.OpenFile(filepath.Join(home, "processor.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+		defer f.Close()
+		logger = log.New(io.MultiWriter(os.Stdout, f), "", log.LstdFlags)
+	}
+	p, err := processor.New(cfg, logger)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	p.Run(ctx.Done())
 	return nil
 }
 

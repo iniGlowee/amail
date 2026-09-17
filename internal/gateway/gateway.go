@@ -516,6 +516,14 @@ func extFor(mediaType string) string {
 var badName = regexp.MustCompile(`[\\/:*?"<>|]+`)
 
 func safeTitle(s string) string {
+	// drop a leading #tag word from the folder name; it lives in message.txt
+	if strings.HasPrefix(s, "#") {
+		if i := strings.IndexAny(s, " \t"); i > 0 {
+			s = s[i+1:]
+		} else {
+			s = strings.TrimPrefix(s, "#")
+		}
+	}
 	s = badName.ReplaceAllString(s, " ")
 	s = strings.TrimSpace(wsRe.ReplaceAllString(s, " "))
 	if len(s) > 60 {
@@ -552,6 +560,16 @@ func (g *Gateway) write(p *Parsed) (string, error) {
 		return os.WriteFile(target, data, 0o664)
 	}
 	body := strings.TrimSpace(p.Text)
+	// A subject that starts with another #tag after the node id (for example
+	// "#amail austin-pc #claude What is ...") is meant for a processor on the
+	// destination: it becomes the first line of message.txt.
+	if strings.HasPrefix(p.Title, "#") {
+		if body != "" {
+			body = p.Title + "\n\n" + body
+		} else {
+			body = p.Title
+		}
+	}
 	if body != "" {
 		if err := put("message.txt", []byte(body+"\n")); err != nil {
 			return "", err

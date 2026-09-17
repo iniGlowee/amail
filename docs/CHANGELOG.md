@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.0 (2026-09-17)
+
+* **Processor** (`amail process --config FILE`): runs a configured command
+  on notes whose first line starts with a handler tag (e.g. `#claude ...`),
+  request on stdin, stdout sent back as a note to another node with a
+  configurable first line (e.g. `#email Claude: {subject}` for the mail
+  gateway). Origin allow-list, per-handler timeout and size caps, exactly-once
+  processing, error reports as replies. `scripts/windows/claude-headless.cmd`
+  (Claude Code CLI, print mode, all tools disabled) and
+  `install-processor-task.ps1` for a logon-only scheduled task. See
+  `docs/PROCESSOR.md`.
+* Gateway (e-mail in): a subject whose text after the node id starts with a
+  `#tag` (e.g. `#amail austin-pc #claude ...`) is written as the first line
+  of `message.txt`, so processors on the destination can act on it; the
+  folder name no longer carries the tag; subject-only mail still produces
+  `message.txt`.
+
 ## 0.5.0 (2026-09-17)
 
 * **AMail to e-mail**: the gateway now also watches the node's inbox for

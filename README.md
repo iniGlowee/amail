@@ -174,6 +174,16 @@ subject. The same gateway works the other way: a note whose first line is
 `#email Subject here` sent to that node goes out as an e-mail, attachments
 included. Details in [docs/GATEWAY.md](docs/GATEWAY.md).
 
+## Ask a program through the mail
+
+`amail process` watches a node's inbox for notes whose first line starts
+with a handler tag, runs the configured command with the request on stdin,
+and sends the output back as a note. With the gateway on the other end, an
+e-mail with subject `#amail austin-pc #claude What is ...?` is answered by
+Claude on the PC and the answer comes back by e-mail. Commands come only
+from the config; the Claude wrapper runs with every tool disabled. Details
+in [docs/PROCESSOR.md](docs/PROCESSOR.md).
+
 ## The mailbox folders
 
 Everything is a plain folder. Use Explorer, Finder, `cp`, a cron job, a PHP

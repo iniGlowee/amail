@@ -162,6 +162,33 @@ func TestOnceWritesAndRemembers(t *testing.T) {
 	}
 }
 
+func TestTaggedSubjectBecomesFirstLine(t *testing.T) {
+	c := cfg(t)
+	g, _ := New(c, nil)
+	_ = os.WriteFile(filepath.Join(c.Maildir, "new", "1700000009.9.host"), []byte(msg("austin_armas@live.com", "#amail austin-pc #claude What is the capital of France?", authOK, "\r\nPlease keep it short.\r\n")), 0o600)
+	res := g.Once()
+	if len(res) != 1 || res[0].Status != "converted" {
+		t.Fatalf("%+v", res)
+	}
+	if !strings.HasPrefix(filepath.Base(res[0].Dest), "What is the capital of France") {
+		t.Fatalf("folder should not carry the tag: %s", res[0].Dest)
+	}
+	b, err := os.ReadFile(filepath.Join(res[0].Dest, "message.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(b), "#claude What is the capital of France?\n\nPlease keep it short.") {
+		t.Fatalf("message.txt:\n%s", b)
+	}
+	// subject-only mail (empty body) still produces message.txt with the tag line
+	_ = os.WriteFile(filepath.Join(c.Maildir, "new", "1700000010.9.host"), []byte(msg("austin_armas@live.com", "#amail austin-pc #claude ping", authOK, "\r\n")), 0o600)
+	res = g.Once()
+	b, _ = os.ReadFile(filepath.Join(res[0].Dest, "message.txt"))
+	if strings.TrimSpace(string(b)) != "#claude ping" {
+		t.Fatalf("subject-only message.txt: %q", b)
+	}
+}
+
 func TestConfigValidate(t *testing.T) {
 	c := Default()
 	if err := c.Validate(); err == nil {
