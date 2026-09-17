@@ -88,9 +88,16 @@ e-mailed question from knowledge only. So a request that arrives by e-mail
 can never make Claude read, write or run anything on the PC: it can only
 produce text.
 
-One-time setup: run the CLI interactively once and log in
-(`%APPDATA%\Claude\claude-code\<version>\claude.exe`, then `/login`), so
-the scheduled task inherits the login.
+One-time setup, in your own PowerShell window (the scheduled task then
+inherits the login):
+
+```powershell
+irm https://claude.ai/install.ps1 | iex     # or: npm install -g @anthropic-ai/claude-code
+claude                                      # then type /login, finish in the browser, then /exit
+```
+
+The wrapper looks in `%USERPROFILE%\.local\bin`, `%APPDATA%\npm`, the
+desktop app's bundle folder and PATH, in that order.
 
 ## Running it
 
