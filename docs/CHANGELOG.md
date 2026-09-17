@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0 (2026-09-17)
+
+* **Styled e-mail** (gateway, AMail to e-mail): `#email style:geex Subject`
+  sends text plus an HTML part rendered from a template with inline styles
+  (Geex theme: Poppins, purple `#AB54DB`, card layout). The body is treated
+  as light Markdown (headings, lists, fenced and inline code, bold, italic,
+  links, quotes, simple tables, rules), HTML-escaped first. Own templates via
+  `email_styles`, `email_default_style` to style every mail, unknown styles
+  refused with a receipt. Attachments still travel as before. The processor's
+  Claude reply now uses `#email style:geex Claude: {subject}`, so answers
+  arrive formatted instead of as raw text.
+* Config loaders (`config.json`, gateway and processor JSON) skip a UTF-8
+  byte-order mark, which Windows PowerShell 5.1 writes with `-Encoding utf8`.
+
 ## 0.6.1 (2026-09-17)
 
 * Windows: `amailw-<ver>-windows-amd64.exe`, the same program built for the

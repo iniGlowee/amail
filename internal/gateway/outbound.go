@@ -4,9 +4,9 @@ package gateway
 //
 // A text file that arrives in the gateway node's inbox whose first line is
 //
-//	#email [to:someone@example.com] Subject text here
+//	#email [to:someone@example.com] [style:geex] Subject text here
 //
-// is sent as an e-mail: the rest of the file is the body, the subject is
+// is sent as an e-mail (style: adds an HTML part, see style.go): the rest of the file is the body, the subject is
 // the rest of that first line, and, when the file is message.txt inside a
 // message folder (what Compose and the inbound gateway produce), every
 // other file in that folder travels as an attachment. The message is handed
@@ -59,6 +59,9 @@ type Outbound struct {
 	EmailReceipt   bool     `json:"email_receipt"`           // write a receipt into outbox/<origin>/
 	EmailDelete    bool     `json:"email_delete_after_send"` // remove the inbox file(s) after a successful send
 	EmailStableSec int      `json:"email_stable_seconds"`    // wait for files to stop changing (default 5)
+
+	EmailStyles       map[string]string `json:"email_styles"`        // style name -> HTML template file; "" keeps the built-in (see style.go)
+	EmailDefaultStyle string            `json:"email_default_style"` // style for notes without style:NAME ("" = plain text only)
 }
 
 func (c *Config) outboundEnabled() bool {
@@ -84,6 +87,11 @@ func (c *Config) validateOutbound() error {
 	if len(c.EmailAllowTo) == 0 {
 		c.EmailAllowTo = c.EmailTo
 	}
+	if s := c.EmailDefaultStyle; s != "" && s != BuiltinStyle {
+		if _, ok := c.EmailStyles[s]; !ok {
+			return fmt.Errorf("email_default_style %q is neither %s nor listed under email_styles", s, BuiltinStyle)
+		}
+	}
 	return nil
 }
 
@@ -93,6 +101,7 @@ type Outgoing struct {
 	Origin      string
 	To          []string
 	Subject     string
+	Style       string // HTML style name from style:NAME, "" = config default
 	Body        string
 	Attachments []string // paths
 }
@@ -216,12 +225,16 @@ func (g *Gateway) parseOutgoing(path, origin string, size int64) (*Outgoing, boo
 	og := &Outgoing{Path: path, Origin: origin, To: append([]string(nil), g.cfg.EmailTo...)}
 	words := strings.Fields(rest)
 	var subj []string
-	for i, w := range words {
-		if i == 0 && strings.HasPrefix(strings.ToLower(w), "to:") {
-			og.To = strings.Split(strings.TrimPrefix(w[3:], ""), ",")
-			continue
+	for _, w := range words {
+		lw := strings.ToLower(w)
+		switch {
+		case len(subj) == 0 && strings.HasPrefix(lw, "to:"):
+			og.To = strings.Split(w[3:], ",")
+		case len(subj) == 0 && strings.HasPrefix(lw, "style:"):
+			og.Style = lw[6:]
+		default:
+			subj = append(subj, w)
 		}
-		subj = append(subj, w)
 	}
 	og.Subject = strings.TrimSpace(strings.Join(subj, " "))
 	if og.Subject == "" {
@@ -280,6 +293,18 @@ func (g *Gateway) build(og *Outgoing) ([]byte, error) {
 	if total+int64(len(og.Body)) > limit {
 		return nil, fmt.Errorf("message is %d MB, e-mail limit is %d MB (send big files through AMail instead)", (total+int64(len(og.Body)))>>20, g.cfg.EmailMaxMB)
 	}
+	style := og.Style
+	if style == "" {
+		style = g.cfg.EmailDefaultStyle
+	}
+	htmlBody := ""
+	if style != "" {
+		h, err := g.renderStyle(style, og)
+		if err != nil {
+			return nil, err
+		}
+		htmlBody = h
+	}
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "From: %s\r\n", g.cfg.EmailFrom)
 	fmt.Fprintf(&b, "To: %s\r\n", strings.Join(og.To, ", "))
@@ -288,21 +313,28 @@ func (g *Gateway) build(og *Outgoing) ([]byte, error) {
 	fmt.Fprintf(&b, "Message-ID: <amail-%d@%s>\r\n", time.Now().UnixNano(), domainOf(g.cfg.EmailFrom))
 	fmt.Fprintf(&b, "X-AMail-Origin: %s\r\n", og.Origin)
 	b.WriteString("MIME-Version: 1.0\r\n")
+	bodyCT, bodyBytes := bodyPart(og.Body, htmlBody)
 	if len(og.Attachments) == 0 {
-		b.WriteString("Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n")
-		b.WriteString(wrap76(base64.StdEncoding.EncodeToString([]byte(og.Body + "\n"))))
+		b.WriteString("Content-Type: " + bodyCT + "\r\n")
+		if htmlBody == "" {
+			b.WriteString("Content-Transfer-Encoding: base64\r\n")
+		}
+		b.WriteString("\r\n")
+		b.Write(bodyBytes)
 		return b.Bytes(), nil
 	}
 	mw := multipart.NewWriter(&b)
 	fmt.Fprintf(&b, "Content-Type: multipart/mixed; boundary=%q\r\n\r\n", mw.Boundary())
 	th := textproto.MIMEHeader{}
-	th.Set("Content-Type", "text/plain; charset=utf-8")
-	th.Set("Content-Transfer-Encoding", "base64")
+	th.Set("Content-Type", bodyCT)
+	if htmlBody == "" {
+		th.Set("Content-Transfer-Encoding", "base64")
+	}
 	pw, err := mw.CreatePart(th)
 	if err != nil {
 		return nil, err
 	}
-	pw.Write([]byte(wrap76(base64.StdEncoding.EncodeToString([]byte(og.Body + "\n")))))
+	pw.Write(bodyBytes)
 	for _, a := range og.Attachments {
 		data, err := os.ReadFile(a)
 		if err != nil {
@@ -323,6 +355,27 @@ func (g *Gateway) build(og *Outgoing) ([]byte, error) {
 		return nil, err
 	}
 	return b.Bytes(), nil
+}
+
+// bodyPart returns the content type and encoded bytes of the message body:
+// base64 text when there is no HTML, otherwise a multipart/alternative with
+// the text first and the HTML second (clients show the last part they can).
+func bodyPart(text, htmlBody string) (string, []byte) {
+	enc := func(s string) []byte { return []byte(wrap76(base64.StdEncoding.EncodeToString([]byte(s + "\n")))) }
+	if htmlBody == "" {
+		return "text/plain; charset=utf-8", enc(text)
+	}
+	var buf bytes.Buffer
+	aw := multipart.NewWriter(&buf)
+	for _, p := range []struct{ ct, body string }{{"text/plain; charset=utf-8", text}, {"text/html; charset=utf-8", htmlBody}} {
+		h := textproto.MIMEHeader{}
+		h.Set("Content-Type", p.ct)
+		h.Set("Content-Transfer-Encoding", "base64")
+		w, _ := aw.CreatePart(h)
+		w.Write(enc(p.body))
+	}
+	aw.Close()
+	return fmt.Sprintf("multipart/alternative; boundary=%q", aw.Boundary()), buf.Bytes()
 }
 
 func contentTypeFor(name string) string {

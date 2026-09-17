@@ -163,6 +163,9 @@ func Load(home string) (*Config, error) {
 		return nil, err
 	}
 	c := &Config{}
+	if len(b) >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF {
+		b = b[3:] // UTF-8 BOM (Windows PowerShell 5.1 writes one)
+	}
 	if err := json.Unmarshal(b, c); err != nil {
 		return nil, fmt.Errorf("%s: %w", Path(home), err)
 	}

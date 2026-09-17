@@ -125,7 +125,7 @@ The same gateway can send. Put a text file into an AMail node whose
 **first line** is
 
 ```
-#email [to:someone@example.com] Subject text here
+#email [to:someone@example.com] [style:geex] Subject text here
 ```
 
 and, when it arrives in the gateway node's inbox, the rest of the file is
@@ -141,6 +141,21 @@ Rules, mirroring the inbound side:
   file is refused (and told so by receipt).
 * Recipients are `email_to` unless the first line carries `to:addr`, and an
   override must be on `email_allowed_to` (default: the same as `email_to`).
+* `style:NAME` on the first line sends the mail as **text plus HTML**
+  (`multipart/alternative`): the text exactly as written, and an HTML part
+  rendered from a template with every style inline, which is what Outlook.com
+  and Gmail actually display. The built-in style `geex` follows the Geex
+  admin theme (Poppins, purple `#AB54DB`, grey `#F3F2F7`): a card with the
+  subject as title, the body, and a footer naming the sender and the origin
+  node. The body is treated as light Markdown: headings, `-`/`1.` lists,
+  fenced code, `inline code`, **bold**, *italic*, links, `>` quotes, simple
+  `|` tables and `---` rules; everything is HTML-escaped first. Add your own
+  templates under `email_styles` (`{"name": "/path/template.html"}`, Go
+  `html/template` with `.Subject .Origin .From .Date .Body .Text`; `.Body` is
+  the rendered HTML) and set `email_default_style` to style every mail. An
+  unknown style refuses the mail with a receipt saying so. This is how
+  Claude's answers arrive nicely formatted: the processor's reply line is
+  `#email style:geex Claude: {subject}` (see `docs/PROCESSOR.md`).
 * `email_max_mb` (default 7) caps body plus attachments; Amazon SES refuses
   raw messages over 10 MB.
 * The message is handed on stdin to `send_command` with the recipients as
@@ -165,7 +180,9 @@ Config keys for this side, in the same JSON:
   "send_command": ["/home/you/Tools/ses-send.sh"],
   "email_max_mb": 7,
   "email_receipt": true,
-  "email_delete_after_send": false
+  "email_delete_after_send": false,
+  "email_styles": {},
+  "email_default_style": ""
 }
 ```
 

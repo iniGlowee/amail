@@ -19,7 +19,7 @@ phone: e-mail to info@example.com
                  |
                  v  amail process on the PC: handler "#claude" runs claude-headless.cmd
        outbox/ausa-web/claude-reply-<ts>.txt
-           "#email Claude: What is the capital of France?"
+           "#email style:geex Claude: What is the capital of France?"
            "Paris is the capital of France. ..."
                  |
                  v  AMail delivers to the server; gateway (AMail -> e-mail) sends it
@@ -52,7 +52,7 @@ ignored (processors are text in, text out).
       "tag": "#claude",
       "command": ["cmd.exe", "/c", "C:\\Users\\you\\AppData\\Local\\Programs\\AMail\\claude-headless.cmd"],
       "reply_to": "ausa-web",
-      "reply_first_line": "#email Claude: {subject}",
+      "reply_first_line": "#email style:geex Claude: {subject}",
       "timeout_seconds": 300,
       "max_input_kb": 64,
       "max_output_kb": 512
