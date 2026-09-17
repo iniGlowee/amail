@@ -19,6 +19,9 @@ import (
 // DefaultPort is the canonical AMail port.
 const DefaultPort = 4444
 
+// DefaultUIListen is where `amail run` serves the local web UI (loopback).
+const DefaultUIListen = "127.0.0.1:4445"
+
 // FileName is the config file inside the AMail home directory.
 const FileName = "config.json"
 
@@ -71,6 +74,7 @@ type Block struct {
 type Config struct {
 	NodeID           string  `json:"node_id"`
 	Listen           string  `json:"listen"`
+	UIListen         string  `json:"ui_listen"` // local web UI served by `amail run`; "off" disables
 	Mailbox          string  `json:"mailbox"`
 	ServerEligible   bool    `json:"server_eligible"`
 	PollSeconds      int     `json:"poll_seconds"`
@@ -119,6 +123,7 @@ func Default(home, nodeID string) *Config {
 	return &Config{
 		NodeID:           nodeID,
 		Listen:           ":" + strconv.Itoa(DefaultPort),
+		UIListen:         DefaultUIListen,
 		Mailbox:          DefaultMailbox(),
 		ServerEligible:   true,
 		PollSeconds:      10,
@@ -164,6 +169,9 @@ func Load(home string) (*Config, error) {
 func (c *Config) normalise() {
 	if c.Listen == "" {
 		c.Listen = ":" + strconv.Itoa(DefaultPort)
+	}
+	if c.UIListen == "" {
+		c.UIListen = DefaultUIListen
 	}
 	if c.Mailbox == "" {
 		c.Mailbox = DefaultMailbox()

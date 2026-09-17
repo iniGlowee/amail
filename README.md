@@ -74,6 +74,29 @@ servers. Single static binary, no dependencies.
    or just copy the file into `~/AMail/outbox/ausa-web/`. Watch it move to
    `sent/ausa-web/`, and check `amail status`.
 
+## The web UI
+
+`amail run` also serves a small web interface on `http://127.0.0.1:4445`
+(loopback only). Open it in a browser, or run `amail ui` to get the same
+page without a running node. From there you can:
+
+* see this node's role, the server, key expiry, disk and mailbox usage, and a
+  live status table of every whitelisted node;
+* read inbox / outbox / sent / held / failed, preview text, images and PDFs,
+  download, delete, reply, or retry a failed file;
+* compose: type a note (saved as a `.txt` in the recipient's inbox) and drag
+  in attachments;
+* edit every setting, reorder the whitelist, manage the blacklist. Saving
+  restarts the node in place, the UI stays up;
+* tail the log and the delivery history.
+
+It is styled after the Geex admin theme and has a dark mode. `ui_listen` in
+`config.json` moves it or turns it off (`"off"`). It never leaves loopback
+unless you point it at another address on purpose; the API also refuses
+requests without the `X-AMail-UI` header, so other web pages in your browser
+cannot talk to it. On a server, reach it with an SSH tunnel:
+`ssh -L 4445:127.0.0.1:4445 user@host` then open `http://127.0.0.1:4445`.
+
 ## The mailbox folders
 
 Everything is a plain folder. Use Explorer, Finder, `cp`, a cron job, a PHP
@@ -109,7 +132,8 @@ Rules of thumb:
 amail init [--id NAME] [--mailbox DIR] [--listen :4444]   create config + mailbox
 amail request-key                                        print the key request again
 amail join <file.amailkey>                               install the key from the operator
-amail run                                                run the node (foreground)
+amail run                                                run the node (foreground) + web UI on ui_listen
+amail ui [--addr 127.0.0.1:4445] [--no-open]             web UI without a running node
 amail status [id ...]                                    who is up, who is the server
 amail send <node-id> <file> [file ...]                   queue files in outbox/
 amail peers [--merge]                                    the server's whitelist; --merge adds new ones to yours

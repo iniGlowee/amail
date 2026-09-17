@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AMail</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23AB54DB'/%3E%3Ctext x='32' y='43' font-family='Poppins,Arial' font-size='32' font-weight='700' fill='%23fff' text-anchor='middle'%3EA%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <a class="logo" href="#overview"><span class="logo__mark">A</span><span class="logo__text">A<b>Mail</b></span></a>
+    <nav class="nav">
+      <a href="#overview" data-view="overview">Overview</a>
+      <span class="nav__section">Mail</span>
+      <a href="#inbox" data-view="inbox">Inbox <i class="count" id="c-inbox"></i></a>
+      <a href="#outbox" data-view="outbox">Outbox <i class="count" id="c-outbox"></i></a>
+      <a href="#sent" data-view="sent">Sent</a>
+      <a href="#forward" data-view="forward">Held for others <i class="count" id="c-forward"></i></a>
+      <a href="#failed" data-view="failed">Failed</a>
+      <a href="#compose" data-view="compose" class="nav__primary">Compose</a>
+      <span class="nav__section">Node</span>
+      <a href="#settings" data-view="settings">Settings</a>
+      <a href="#log" data-view="log">Log</a>
+    </nav>
+    <div class="sidebar__foot" id="foot"></div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar__title" id="title">Overview</div>
+      <div class="topbar__right">
+        <span class="chip" id="chip-node">…</span>
+        <span class="chip" id="chip-role"></span>
+        <button class="btn btn--ghost" id="btn-theme" title="Toggle dark mode">◐</button>
+        <button class="btn btn--ghost" id="btn-refresh" title="Refresh">↻</button>
+      </div>
+    </header>
+    <div class="toast" id="toast"></div>
+    <section class="view" id="view"></section>
+  </main>
+</div>
+<div class="modal" id="modal" hidden>
+  <div class="modal__box">
+    <div class="modal__head"><strong id="modal-title"></strong><button class="btn btn--ghost" id="modal-close">✕</button></div>
+    <div class="modal__body" id="modal-body"></div>
+  </div>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -541,6 +541,68 @@ func (m *Mailbox) Counts() (inbox, outbox, forward int) {
 	return count(DirInbox), count(DirOutbox), count(DirForward)
 }
 
+// Enqueue streams r into outbox/<to>/<name> (unique) and returns the path.
+// Used by the UI for uploads and typed notes.
+func (m *Mailbox) Enqueue(to, name string, r io.Reader) (string, error) {
+	if err := config.ValidID(to); err != nil {
+		return "", err
+	}
+	clean, err := CleanName(name)
+	if err != nil {
+		return "", err
+	}
+	sub, base := split(clean)
+	dir := filepath.Join(m.Dir(DirOutbox), to, sub)
+	if err := os.MkdirAll(dir, dirPerm); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(dir, tmpPrefix+"*")
+	if err != nil {
+		return "", err
+	}
+	tmpName := tmp.Name()
+	_, err = io.Copy(tmp, r)
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = os.Remove(tmpName)
+		return "", err
+	}
+	_ = os.Chmod(tmpName, filePerm)
+	final := uniquePath(dir, base)
+	if err := os.Rename(tmpName, final); err != nil {
+		_ = os.Remove(tmpName)
+		return "", err
+	}
+	return final, nil
+}
+
+// Delete removes one file from a folder together with its sidecars, and
+// prunes empty sub folders it leaves behind.
+func (m *Mailbox) Delete(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	_ = os.Remove(path + MetaExt)
+	_ = os.Remove(path + ".error.txt")
+	// prune up to, but not including, <kind>/<peer>
+	rel, err := filepath.Rel(m.Root, filepath.Dir(path))
+	if err != nil {
+		return nil
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	dir := filepath.Dir(path)
+	for len(parts) > 2 {
+		if os.Remove(dir) != nil {
+			break
+		}
+		dir = filepath.Dir(dir)
+		parts = parts[:len(parts)-1]
+	}
+	return nil
+}
+
 // Drop copies a local file into outbox/<to>/ and returns the queued path.
 func (m *Mailbox) Drop(to, src string) (string, error) {
 	if err := config.ValidID(to); err != nil {

@@ -81,3 +81,6 @@ Rollback: `sudo systemctl disable --now amail@ec2-user; sudo rm /usr/local/bin/a
 - **2026-09-16 (0.1.2)**: `austin-pc` switched to `listen: "off"`. No port open on the PC (netstat shows
   nothing on 4444), still delivers directly to `ausa-web` and receives by pull. Covered by
   `TestClientOnlyListenOff`.
+- **2026-09-17 (0.2.0)**: web UI verified in a browser on `austin-pc`: overview with live peer table,
+  inbox preview modal, compose (note delivered to `ausa-web` in ~10 s), settings save with in-place node
+  restart, log view, light and dark themes. API guards covered by `internal/ui/ui_test.go`.

@@ -29,6 +29,7 @@ import (
 	"amail/internal/mailbox"
 	"amail/internal/node"
 	"amail/internal/proto"
+	"amail/internal/ui"
 )
 
 // version is set at build time: -ldflags "-X main.version=1.2.3".
@@ -47,6 +48,8 @@ Node commands
   request-key                                        show how to ask %s for a network key
   join <file.amailkey>                               install the network key you were given
   run                                                run the node (foreground; use the service scripts to keep it running)
+                                                     also serves the local web UI at ui_listen (default http://127.0.0.1:4445)
+  ui [--addr 127.0.0.1:4445] [--no-open]             open the web UI without running a node (read, send, delete, settings)
   status [id ...]                                    ask this node and every whitelisted peer who they are
   send <node-id> <file> [file ...]                   queue files in outbox/<node-id>/ for delivery
   peers [--merge]                                    list the server's whitelist, optionally adding unknown nodes to ours
@@ -99,6 +102,8 @@ func main() {
 		err = cmdJoin(home, rest)
 	case "run":
 		err = cmdRun(home)
+	case "ui":
+		err = cmdUI(home, rest)
 	case "status":
 		err = cmdStatus(home, rest)
 	case "send":
@@ -314,7 +319,7 @@ func loadNode(home string) (*config.Config, *keys.Material, error) {
 }
 
 func cmdRun(home string) error {
-	cfg, mat, err := loadNode(home)
+	cfg0, _, err := loadNode(home)
 	if err != nil {
 		return err
 	}
@@ -327,13 +332,99 @@ func cmdRun(home string) error {
 		w = io.MultiWriter(os.Stdout, f)
 	}
 	logger := log.New(w, "", log.LstdFlags)
-	n, err := node.New(node.Options{Config: cfg, Material: mat, Logger: logger, Version: version})
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Local web UI, served alongside the node. Settings saved there ask for
+	// a node restart through restartCh; the process (and the UI) keep running.
+	restartCh := make(chan struct{}, 1)
+	var srv *ui.Server
+	if !ui.Off(cfg0.UIListen) {
+		srv = &ui.Server{Home: home, Version: version, Restart: func() {
+			select {
+			case restartCh <- struct{}{}:
+			default:
+			}
+		}}
+		go func() {
+			if err := srv.ListenAndServe(ctx, cfg0.UIListen); err != nil {
+				logger.Printf("ui: %v (set ui_listen to \"off\" to silence)", err)
+			}
+		}()
+		logger.Printf("ui: http://%s (loopback only; change ui_listen in config.json)", cfg0.UIListen)
+	}
+
+	for {
+		cfg, mat, err := loadNode(home)
+		if err != nil {
+			return err
+		}
+		n, err := node.New(node.Options{Config: cfg, Material: mat, Logger: logger, Version: version})
+		if err != nil {
+			return err
+		}
+		if srv != nil {
+			srv.SetLocal(n)
+		}
+		nctx, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() {
+			_ = n.Run(nctx)
+			close(done)
+		}()
+		select {
+		case <-ctx.Done():
+			cancel()
+			<-done
+			return nil
+		case <-restartCh:
+			logger.Printf("settings changed: restarting node")
+			cancel()
+			<-done
+			if srv != nil {
+				srv.SetLocal(nil)
+			}
+			time.Sleep(300 * time.Millisecond)
+		}
+	}
+}
+
+func cmdUI(home string, args []string) error {
+	fs := flag.NewFlagSet("ui", flag.ContinueOnError)
+	addr := fs.String("addr", "", "address to serve on (default: ui_listen from config, or 127.0.0.1:4445)")
+	noOpen := fs.Bool("no-open", false, "do not open the browser")
+	if _, err := parseMixed(fs, args); err != nil {
+		return err
+	}
+	cfg, err := config.Load(home)
 	if err != nil {
 		return err
 	}
+	if *addr == "" {
+		*addr = cfg.UIListen
+		if ui.Off(*addr) {
+			*addr = config.DefaultUIListen
+		}
+	}
+	url := "http://" + *addr
+	srv := &ui.Server{Home: home, Version: version}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return n.Run(ctx)
+	ln, err := net.Listen("tcp", *addr)
+	if err != nil {
+		// Most likely the running node already serves the UI there.
+		fmt.Printf("%s is busy (%v).\nIf 'amail run' is up it already serves the UI at %s; opening that.\n", *addr, err, url)
+		if !*noOpen {
+			ui.OpenBrowser(url)
+		}
+		return nil
+	}
+	_ = ln.Close()
+	fmt.Printf("AMail UI for node %q at %s  (Ctrl+C to stop)\n", cfg.NodeID, url)
+	if !*noOpen {
+		ui.OpenBrowser(url)
+	}
+	return srv.ListenAndServe(ctx, *addr)
 }
 
 // --- status ---------------------------------------------------------------

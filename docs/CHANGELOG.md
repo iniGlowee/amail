@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.0 (2026-09-17)
+
+* **Local web UI**, embedded in the binary, styled after the Geex admin
+  theme (Poppins, purple primary, card layout, dark mode). `amail run` serves
+  it at `ui_listen` (default `http://127.0.0.1:4445`, loopback only;
+  `"off"` disables); `amail ui` serves it without a running node.
+  Overview with live peer status, folder views for inbox / outbox / sent /
+  held / failed with open, download, delete, reply and retry; compose with
+  typed notes and drag-and-drop attachments; settings editor for every
+  config key including an ordered whitelist and the blacklist; log and
+  history tails. Saving settings restarts the node in place.
+* Guards: Host and Origin checks plus a required `X-AMail-UI` header on the
+  API, so a web page in the same browser cannot drive the node.
+* `mailbox.Enqueue` / `Delete` helpers.
+
 ## 0.1.2 (2026-09-16)
 
 * `listen: "off"` (or `amail init --listen off`): a client-only node. It
