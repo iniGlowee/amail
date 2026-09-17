@@ -57,6 +57,17 @@ forwarding, no router changes, no firewall rules.
 
    Open a **new** terminal afterwards and check: `amail version`.
 
+   **Windows may warn you.** The program is not code-signed, so SmartScreen
+   can show "Windows protected your PC" the first time, or PowerShell may
+   say the file is blocked. The checksum you verified in step 2 is the real
+   proof it is genuine. To clear the warning:
+
+   ```powershell
+   Unblock-File "$env:LOCALAPPDATA\Programs\AMail\amail.exe"
+   ```
+
+   or click *More info*, then *Run anyway*, once.
+
 **Option B, build it yourself**
 
 ```bash
