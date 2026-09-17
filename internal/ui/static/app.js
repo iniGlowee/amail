@@ -212,7 +212,7 @@
     const opts = peers.map(p => `<option value="${esc(p.id)}">${esc(p.id)}${p.host ? '' : ' (via server)'}</option>`).join('');
     view.innerHTML = `<div class="card"><form class="form" id="compose">
       <div class="grid2">
-        <div class="field"><label>To (node id)</label><input list="peers" id="to" required placeholder="ausa-web" pattern="[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"><datalist id="peers">${opts}</datalist><span class="hint">Must be on the whitelist. Unknown ids end up in Failed.</span></div>
+        <div class="field"><label>To (node id)</label><input list="peers" id="to" required placeholder="ausa-web" pattern="[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?"><datalist id="peers">${opts}</datalist><span class="hint">Must be on the whitelist. Unknown ids end up in Failed.</span></div>
         <div class="field"><label>Subject (optional)</label><input id="subject" placeholder="Site photos for the new page"><span class="hint">With a subject, the note and attachments arrive together in one folder named after it.</span></div>
       </div>
       <div class="field"><label>Note</label><textarea id="text" placeholder="Type a message. It is saved as a .txt file in the other node's inbox."></textarea></div>
