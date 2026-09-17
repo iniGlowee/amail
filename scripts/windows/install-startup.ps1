@@ -42,7 +42,18 @@ Get-Process | Where-Object { $_.ProcessName -like "amail*" } | Stop-Process -For
 Start-Sleep -Milliseconds 800
 Copy-Item -Path $Binary -Destination $exe -Force
 
-$action   = New-ScheduledTaskAction -Execute $exe -Argument "--home `"$nodeHome`" run" -WorkingDirectory $installDir
+# The task runs the GUI-subsystem build (amailw.exe: same program, no console
+# window) when one sits next to the given binary, e.g. dist\amailw-<ver>-windows-amd64.exe.
+$taskExe = $exe
+$guiCandidate = Join-Path (Split-Path $Binary) ((Split-Path $Binary -Leaf) -replace '^amail-', 'amailw-')
+if (Test-Path $guiCandidate) {
+    Copy-Item -Path $guiCandidate -Destination (Join-Path $installDir "amailw.exe") -Force
+    $taskExe = Join-Path $installDir "amailw.exe"
+} elseif (Test-Path (Join-Path $installDir "amailw.exe")) {
+    $taskExe = Join-Path $installDir "amailw.exe"
+}
+
+$action   = New-ScheduledTaskAction -Execute $taskExe -Argument "--home `"$nodeHome`" run" -WorkingDirectory $installDir
 $trigger  = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
@@ -57,6 +68,6 @@ Start-Sleep -Seconds 4
 $info = Get-ScheduledTaskInfo -TaskName "AMail"
 $state = (Get-ScheduledTask -TaskName "AMail").State
 Write-Host "Installed $exe"
-Write-Host "Task 'AMail': state $state, last result $($info.LastTaskResult) (0 or 267009 = running fine); starts at logon of $env:USERNAME, hidden, no wake."
+Write-Host "Task 'AMail': state $state, last result $($info.LastTaskResult) (0 or 267009 = running fine); runs $taskExe at logon of $env:USERNAME, hidden, no wake."
 Write-Host "Log: $nodeHome\amail.log    Check: `"$exe`" status    Remove: scripts\windows\uninstall-startup.ps1"
 if ($state -ne "Running") { Write-Host "The node is not running. Last lines of the log:"; Get-Content "$nodeHome\amail.log" -Tail 5 }

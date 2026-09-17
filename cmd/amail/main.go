@@ -156,6 +156,16 @@ func main() {
 	}
 }
 
+// console is stdout that swallows errors: the GUI-subsystem build
+// (amailw.exe) has no console, and io.MultiWriter stops at the first
+// failing writer, which would otherwise starve the log file.
+type console struct{}
+
+func (console) Write(p []byte) (int, error) {
+	_, _ = os.Stdout.Write(p)
+	return len(p), nil
+}
+
 // parseMixed parses flags that may appear before or after positional
 // arguments (Go's flag package stops at the first positional) and returns
 // the positionals.
@@ -353,10 +363,10 @@ func cmdRun(home string) error {
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		return err
 	}
-	var w io.Writer = os.Stdout
+	var w io.Writer = console{}
 	if f, err := os.OpenFile(filepath.Join(home, "amail.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
 		defer f.Close()
-		w = io.MultiWriter(os.Stdout, f)
+		w = io.MultiWriter(console{}, f)
 	}
 	logger := log.New(w, "", log.LstdFlags)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -491,7 +501,7 @@ func cmdGateway(home string, args []string) error {
 	if *once {
 		cfg.PollSeconds = 0
 	}
-	logger := log.New(os.Stdout, "", log.LstdFlags)
+	logger := log.New(console{}, "", log.LstdFlags)
 	g, err := gateway.New(cfg, logger)
 	if err != nil {
 		return err
@@ -543,10 +553,10 @@ func cmdProcess(home string, args []string) error {
 	if *once {
 		cfg.PollSeconds = 0
 	}
-	logger := log.New(os.Stdout, "", log.LstdFlags)
+	logger := log.New(console{}, "", log.LstdFlags)
 	if f, err := os.OpenFile(filepath.Join(home, "processor.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
 		defer f.Close()
-		logger = log.New(io.MultiWriter(os.Stdout, f), "", log.LstdFlags)
+		logger = log.New(io.MultiWriter(console{}, f), "", log.LstdFlags)
 	}
 	p, err := processor.New(cfg, logger)
 	if err != nil {

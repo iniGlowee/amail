@@ -181,10 +181,15 @@ script under `scripts\windows`):
 powershell -ExecutionPolicy Bypass -File scripts\windows\install-startup.ps1 -Binary "$env:LOCALAPPDATA\Programs\AMail\amail.exe"
 ```
 
+Download `amailw-<version>-windows-amd64.exe` from the release too and keep
+it next to the `amail-…` file you pass as `-Binary`: it is the same program
+without a console window, and the installer uses it for the task so nothing
+pops up at logon.
+
 What this registers, deliberately:
 
 * task name **AMail**, starts when *you* log on (not at boot, not for other
-  users), runs hidden in your session, ends when you log off;
+  users), runs invisibly in your session, ends when you log off;
 * never wakes the computer and does not require it to be plugged in, so it
   suits a PC that is not always on;
 * if the node crashes it is restarted a minute later;

@@ -358,6 +358,7 @@ func (g *Gateway) send(ctx context.Context, msg []byte, to []string) (string, er
 	}
 	args := append(append([]string{}, g.cfg.SendCommand[1:]...), to...)
 	cmd := exec.CommandContext(ctx, g.cfg.SendCommand[0], args...)
+	hideWindow(cmd)
 	cmd.Stdin = bytes.NewReader(msg)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1 (2026-09-17)
+
+* Windows: `amailw-<ver>-windows-amd64.exe`, the same program built for the
+  GUI subsystem, so scheduled tasks run it with no console window. The
+  installers copy it as `amailw.exe` and use it for the "AMail" and "AMail
+  processor" tasks; `amail.exe` stays for the command line. Handler and
+  send commands are started without a window too.
+
 ## 0.6.0 (2026-09-17)
 
 * **Processor** (`amail process --config FILE`): runs a configured command

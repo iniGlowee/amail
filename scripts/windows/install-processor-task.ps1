@@ -7,7 +7,11 @@
 # logoff, never wakes the PC, allowed on battery, restarted after a crash.
 param([string]$Config = "", [string]$Binary = "", [string]$NodeHome = "")
 $ErrorActionPreference = "Stop"
-if ($Binary -eq "") { $Binary = Join-Path $env:LOCALAPPDATA "Programs\AMail\amail.exe" }
+if ($Binary -eq "") {
+    # prefer the no-console build installed by install-startup.ps1
+    $Binary = Join-Path $env:LOCALAPPDATA "Programs\AMail\amailw.exe"
+    if (-not (Test-Path $Binary)) { $Binary = Join-Path $env:LOCALAPPDATA "Programs\AMail\amail.exe" }
+}
 if (-not (Test-Path $Binary)) { throw "amail.exe not found at $Binary; run install-startup.ps1 first or pass -Binary" }
 if ($NodeHome -eq "" -and $env:AMAIL_HOME) { $NodeHome = $env:AMAIL_HOME }
 if ($NodeHome -eq "") { $NodeHome = Join-Path $env:APPDATA "AMail" }

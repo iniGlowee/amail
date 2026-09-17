@@ -13,9 +13,13 @@ build() {
 }
 echo "building amail ${VERSION}"
 build windows amd64 .exe
+# Same program built for the Windows GUI subsystem: no console window when
+# run by a scheduled task. Logs go to files anyway. CLI use stays on amail.exe.
+out="dist/amailw-${VERSION}-windows-amd64.exe"; echo "  $out (no console, for background tasks)"
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=${VERSION}" -o "$out" ./cmd/amail
 build linux   amd64 ""
 build linux   arm64 ""
 # Checksums so a downloaded binary can be verified against the release page.
-( cd dist && (sha256sum amail-"${VERSION}"-* 2>/dev/null || shasum -a 256 amail-"${VERSION}"-*) > SHA256SUMS )
+( cd dist && (sha256sum amail-"${VERSION}"-* amailw-"${VERSION}"-* 2>/dev/null || shasum -a 256 amail-"${VERSION}"-* amailw-"${VERSION}"-*) > SHA256SUMS )
 echo "  dist/SHA256SUMS"
 echo "done"

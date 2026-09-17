@@ -408,6 +408,7 @@ func (p *Processor) remember(key string) {
 // runCommand is the default ExecFunc.
 func runCommand(ctx context.Context, argv []string, stdin string) (string, string, error) {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	hideWindow(cmd)
 	cmd.Stdin = strings.NewReader(stdin)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb

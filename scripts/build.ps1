@@ -17,9 +17,13 @@ function Build($os, $arch, $ext) {
 }
 Write-Host "building amail $Version"
 Build windows amd64 .exe
+$out = "distmailw-$Version-windows-amd64.exe"; Write-Host "  $out (no console, for background tasks)"
+$env:CGO_ENABLED = "0"; $env:GOOS = "windows"; $env:GOARCH = "amd64"
+go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=$Version" -o $out ./cmd/amail
+if ($LASTEXITCODE -ne 0) { throw "build failed for windowsgui" }
 Build linux   amd64 ""
 Build linux   arm64 ""
 Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED -ErrorAction SilentlyContinue
-Get-ChildItem "dist\amail-$Version-*" | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name } | Set-Content -Encoding ascii dist\SHA256SUMS
+Get-ChildItem "dist\amail-$Version-*", "dist\amailw-$Version-*" | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name } | Set-Content -Encoding ascii dist\SHA256SUMS
 Write-Host "  dist\SHA256SUMS"
 Write-Host "done"
